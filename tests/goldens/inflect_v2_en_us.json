@@ -1,0 +1,80 @@
+{
+  "metadata": {
+    "voice": "en-us",
+    "source": "Captured from espeakng-runtime auto mode; phoneme and token snapshots are stable frontend compatibility fixtures, not a promise of identical eSpeak output across runtime versions."
+  },
+  "cases": [
+    {
+      "text": "Hello, world.",
+      "phonemes": "həlˈoʊ, wˈɜːld.",
+      "token_ids": [
+        0, 50, 0, 83, 0, 54, 0, 156, 0, 57, 0, 135, 0, 3, 0, 16, 0, 65, 0, 156,
+        0, 87, 0, 158, 0, 54, 0, 46, 0, 4, 0
+      ]
+    },
+    {
+      "text": "Doesn't the well-known café work?",
+      "phonemes": "dˈʌzənt ðˈə wˈɛlnˈoʊn kæfˈeɪ wˈɜːk?",
+      "token_ids": [
+        0, 46, 0, 156, 0, 138, 0, 68, 0, 83, 0, 56, 0, 62, 0, 16, 0, 81, 0, 156,
+        0, 83, 0, 16, 0, 65, 0, 156, 0, 86, 0, 54, 0, 56, 0, 156, 0, 57, 0, 135,
+        0, 56, 0, 16, 0, 53, 0, 72, 0, 48, 0, 156, 0, 47, 0, 102, 0, 16, 0, 65,
+        0, 156, 0, 87, 0, 158, 0, 53, 0, 6, 0
+      ]
+    },
+    {
+      "text": "“Hello,” she said.",
+      "phonemes": "“həlˈoʊ,” ʃˈiː sˈɛd.",
+      "token_ids": [
+        0, 14, 0, 50, 0, 83, 0, 54, 0, 156, 0, 57, 0, 135, 0, 3, 0, 15, 0, 16,
+        0, 131, 0, 156, 0, 51, 0, 158, 0, 16, 0, 61, 0, 156, 0, 86, 0, 46, 0, 4,
+        0
+      ]
+    },
+    {
+      "text": "Hi—there…",
+      "phonemes": "hˈaɪ—ðˈɛɹ…",
+      "token_ids": [
+        0, 50, 0, 156, 0, 43, 0, 102, 0, 9, 0, 81, 0, 156, 0, 86, 0, 123, 0, 10,
+        0
+      ]
+    },
+    {
+      "text": "  Hello?  ",
+      "phonemes": "  həlˈoʊ?  ",
+      "token_ids": [
+        0, 16, 0, 16, 0, 50, 0, 83, 0, 54, 0, 156, 0, 57, 0, 135, 0, 6, 0, 16,
+        0, 16, 0
+      ]
+    },
+    {
+      "text": "Saskatchewan.",
+      "phonemes": "sˈæskɐtʃˌuːən.",
+      "token_ids": [
+        0, 61, 0, 156, 0, 72, 0, 61, 0, 53, 0, 70, 0, 62, 0, 131, 0, 157, 0, 63,
+        0, 158, 0, 83, 0, 56, 0, 4, 0
+      ]
+    },
+    {
+      "text": "One; two: three!",
+      "phonemes": "wˈʌn; tˈuː: θɹˈiː!",
+      "token_ids": [
+        0, 65, 0, 156, 0, 138, 0, 56, 0, 1, 0, 16, 0, 62, 0, 156, 0, 63, 0, 158,
+        0, 2, 0, 16, 0, 119, 0, 123, 0, 156, 0, 51, 0, 158, 0, 5, 0
+      ]
+    },
+    {
+      "text": "First. Second?",
+      "phonemes": "fˈɜːst. sˈɛkənd?",
+      "token_ids": [
+        0, 48, 0, 156, 0, 87, 0, 158, 0, 61, 0, 62, 0, 4, 0, 16, 0, 61, 0, 156,
+        0, 86, 0, 53, 0, 83, 0, 56, 0, 46, 0, 6, 0
+      ]
+    },
+    {
+      "text": "café.",
+      "phonemes": "kæfˈeɪ.",
+      "token_ids": [0, 53, 0, 72, 0, 48, 0, 156, 0, 47, 0, 102, 0, 4, 0]
+    }
+  ]
+}

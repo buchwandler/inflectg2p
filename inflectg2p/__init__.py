@@ -1,26 +1,25 @@
-"""Independent Inflect v2 English G2P and token-ID frontend."""
+"""Prepared-text phoneme and token-ID frontend for Inflect v2."""
 
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _distribution_version
 
-from .api import InflectG2P, phonemize, token_ids
-from .frontend import (
-    ABBREVIATIONS,
-    LETTER_NAMES,
-    MONTHS,
-    PHONEME_OVERRIDES,
-    WORD_OVERRIDES,
-    encode_phonemes,
-    intersperse_blanks,
-    normalize_text,
-    phoneme_ids,
-    phonemize_normalized,
-    phonemize_normalized_batch,
-    run_frontend,
-    run_frontend_batch,
+from .api import InflectG2P, phoneme_ids, phonemes, phonemize_prepared
+from .codec import encode_phonemes, intersperse_blanks
+from .config import InflectG2PConfig
+from .errors import (
+    BackendError,
+    BackendUnavailableError,
+    InflectG2PError,
+    LexiconDependencyError,
+    LexiconError,
+    LexiconMissError,
+    LexiconResourceError,
+    MissingSymbolError,
+    PhonemizationError,
 )
-from .symbols import BLANK_ID, SPACE_ID, SYMBOLS, SYMBOL_TO_ID
-from .types import FrontendResult
+from .lexicons import available_lexicons, lexicon_info
+from .symbols import BLANK_ID, SPACE_ID, SYMBOL_TO_ID, SYMBOLS
+from .types import LexiconHit, PhonemizeResult
 
 try:
     __version__ = _distribution_version("inflectg2p")
@@ -29,25 +28,28 @@ except PackageNotFoundError:
 
 __all__ = [
     "__version__",
-    "ABBREVIATIONS",
+    "BackendError",
+    "BackendUnavailableError",
     "BLANK_ID",
-    "FrontendResult",
     "InflectG2P",
-    "LETTER_NAMES",
-    "MONTHS",
-    "PHONEME_OVERRIDES",
+    "InflectG2PConfig",
+    "InflectG2PError",
+    "LexiconDependencyError",
+    "LexiconError",
+    "LexiconHit",
+    "LexiconMissError",
+    "LexiconResourceError",
+    "MissingSymbolError",
+    "PhonemizeResult",
+    "PhonemizationError",
     "SPACE_ID",
     "SYMBOLS",
     "SYMBOL_TO_ID",
-    "WORD_OVERRIDES",
+    "available_lexicons",
     "encode_phonemes",
     "intersperse_blanks",
-    "normalize_text",
+    "lexicon_info",
     "phoneme_ids",
-    "phonemize",
-    "phonemize_normalized",
-    "phonemize_normalized_batch",
-    "run_frontend",
-    "run_frontend_batch",
-    "token_ids",
+    "phonemes",
+    "phonemize_prepared",
 ]

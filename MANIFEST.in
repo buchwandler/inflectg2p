@@ -1,4 +1,15 @@
 include LICENSE
 include NOTICE
 include README.md
+include pyproject.toml
 recursive-include inflectg2p py.typed
+recursive-include docs *.md *.py Makefile requirements.txt
+recursive-include examples *.py *.md
+include tools/check_release_artifacts.py
+recursive-include tests *.py *.json
+prune .github
+prune .ledger
+prune build
+prune dist
+prune .venv
+global-exclude __pycache__ *.py[cod]

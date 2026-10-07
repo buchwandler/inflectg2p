@@ -1,51 +1,58 @@
 # inflectg2p
 
-Independent Python packaging of the public **Inflect v2** English text frontend.
-It performs the same written-text normalization, eSpeak-ng phonemization, verified
-phoneme overrides, symbol lookup, and VITS blank interspersion used by the public
-Inflect-Nano-v2 / Inflect-Micro-v2 runners.
+An Inflect v2 phoneme and token-ID frontend for **prepared, speakable English text**.
 
-The package has a flat layout (no `src/`) and uses Git-tag-driven `setuptools-scm`
-dynamic versioning.
+`inflectg2p` sends text through `espeakng-runtime`, applies the Inflect symbol inventory, and intersperses VITS-style blank IDs. It does not expand numbers, dates, times, currency, abbreviations, identifiers, or other semantic written forms. Prepare those in your application before calling this package. It does not load a TTS model or synthesize audio.
 
 ## Install
 
-```bash
+```console
 python -m pip install inflectg2p
 ```
+
+Optional runtime and lexicon extras:
+
+```console
+python -m pip install 'inflectg2p[bundled]'
+python -m pip install 'inflectg2p[lexphon]'
+python -m pip install 'inflectg2p[g2lex]'
+```
+
+Lexicon packages and pronunciation assets are optional. `inflectg2p` never downloads lexicons implicitly. See [installation](docs/installation.md) and [lexicons](docs/lexicons.md).
 
 ## Python
 
 ```python
-from inflectg2p import run_frontend
+from inflectg2p import InflectG2P
 
-result = run_frontend("The invoice is $12.50 at 9:05 AM.")
-print(result.normalized_text)
-print(result.phoneme_text)
+with InflectG2P() as g2p:
+    result = g2p.phonemize_prepared("Hello, world.")
+
+print(result.phonemes)
 print(result.token_ids)
+print(result.token_count)
 ```
 
-`token_ids` are model-ready Inflect v2 IDs: every phoneme-symbol ID is interspersed
-with blank/pad ID `0`, producing the same `(2*n)+1` framing used by the official ONNX
-runner.
+`result.text` is the unchanged input. `result.lexicon_hits` reports explicit lexicon matches when configured. The functional helpers `phonemize_prepared`, `phonemes`, and `phoneme_ids` are also available.
 
-## Compatibility target
+## CLI
 
-This MVP follows the public v2 frontend contract published in both official releases:
+```console
+inflectg2p 'Hello, world.'
+inflectg2p --espeak-mode cli 'Hello, world.'
+inflectg2p --lexicon en-us:lexhint 'Saskatchewan is fluorescent.'
+```
 
-- English `en-us` eSpeak phonemization with stress and punctuation preserved;
-- public normalization rules for numbers, money, dates, times, abbreviations, acronyms,
-  identifiers, and punctuation;
-- the two published phoneme overrides;
-- the published Inflect/Tacotron symbol inventory;
-- strict symbol lookup, matching upstream failure semantics for unsupported output symbols.
+The CLI prints JSON containing the prepared text, phonemes, token IDs, and token count. There is no `--normalize` option because semantic preparation belongs to the caller.
 
-## Dynamic versioning
+## Documentation and examples
 
-Versions come from Git tags through `setuptools-scm`. A source archive without Git metadata
-uses `0.1.dev0`; `inflectg2p.__version__` reads installed distribution metadata.
+Start with the [documentation index](docs/index.md). Runnable examples are in [`examples/`](examples/).
 
-## License
+## Compatibility
 
-Apache-2.0. The Inflect frontend code this package derives from is published by Owen Song
-under Apache-2.0. Third-party dependencies retain their own licenses.
+The exact contract covers the Inflect v2 symbol inventory, strict symbol validation, and blank framing. eSpeak pronunciation depends on the installed runtime and voice data. See [compatibility](docs/compatibility.md) for the boundaries and golden snapshots.
+
+## Version and license
+
+Versions are derived from Git tags with `setuptools-scm`. The project is licensed under Apache-2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).

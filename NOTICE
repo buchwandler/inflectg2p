@@ -1,7 +1,5 @@
 inflectg2p
 
-This project contains an independently packaged derivative of the public Inflect v2
-English frontend released by Owen Song under Apache-2.0.
+This project contains an independently packaged implementation of the public Inflect v2 phoneme and token-ID frontend contract. The upstream Inflect frontend was released by Owen Song under Apache-2.0.
 
-Third-party dependencies, including phonemizer, eSpeak NG runtime assets, and num2words,
-retain their own licenses and notices.
+Third-party dependencies and optional pronunciation assets retain their own licenses and notices. eSpeak/eSpeak NG runtime access is provided through espeakng-runtime. Optional lexicon support may use Lexphon and G2Lex.

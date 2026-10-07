@@ -1,4 +1,4 @@
-from inflectg2p.frontend import encode_phonemes, intersperse_blanks
+from inflectg2p.codec import encode_phonemes, intersperse_blanks
 from inflectg2p.symbols import BLANK_ID, SYMBOL_TO_ID
 
 
