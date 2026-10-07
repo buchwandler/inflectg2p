@@ -218,3 +218,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+inflectg2p/_version.py
+context_inflectg2p*.*

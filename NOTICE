@@ -1,0 +1,7 @@
+inflectg2p
+
+This project contains an independently packaged derivative of the public Inflect v2
+English frontend released by Owen Song under Apache-2.0.
+
+Third-party dependencies, including phonemizer, eSpeak NG runtime assets, and num2words,
+retain their own licenses and notices.
