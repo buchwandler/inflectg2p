@@ -1,0 +1,43 @@
+rows:
+  - sha: bab07efd435c48a7a03e1255de31ed322c927e39
+    inspected: true
+    inspected_paths:
+      - README.md
+      - inflectg2p/__init__.py
+      - inflectg2p/api.py
+      - inflectg2p/frontend.py
+      - inflectg2p/symbols.py
+      - inflectg2p/types.py
+      - pyproject.toml
+      - tests/test_symbols.py
+    observed_behavior: "Introduced the initial Python package and command-line frontend for producing Inflect v2 phonemes and blank-framed token IDs."
+    public_impact: public
+    decision: accepted
+    target_entry_key: null
+    target_entry_id: null
+    notes: ""
+  - sha: 9f87640a0099e32d98ce9dfc0e7b5fdc42f17168
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/api.md
+      - docs/backends.md
+      - docs/cli.md
+      - docs/installation.md
+      - docs/lexicons.md
+      - inflectg2p/api.py
+      - inflectg2p/backends/espeak.py
+      - inflectg2p/config.py
+      - inflectg2p/lexicons/base.py
+      - inflectg2p/lexicons/g2lex.py
+      - inflectg2p/lexicons/lexphon.py
+      - inflectg2p/lexicons/overlay.py
+      - inflectg2p/lexicons/registry.py
+      - inflectg2p/types.py
+      - pyproject.toml
+    observed_behavior: "Added selectable espeakng-runtime configuration, ordered optional Lexphon and local G2Lex pronunciation overlays with hit provenance, CLI controls, and user documentation."
+    public_impact: public
+    decision: accepted
+    target_entry_key: null
+    target_entry_id: null
+    notes: ""

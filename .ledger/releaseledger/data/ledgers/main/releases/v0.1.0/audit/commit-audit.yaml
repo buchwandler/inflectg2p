@@ -1,0 +1,166 @@
+schema_version: 1
+object_type: commit_audit_sheet
+versioning:
+  schema_version: 1
+  revision: 3
+release_version: v0.1.0
+git_base_ref: 6fee2c7
+git_base_sha: 6fee2c7dd66640095c60271903a9088ce8d5570e
+git_head_ref: HEAD
+git_head_sha: 9f87640a0099e32d98ce9dfc0e7b5fdc42f17168
+git_range: 6fee2c7dd66640095c60271903a9088ce8d5570e..9f87640a0099e32d98ce9dfc0e7b5fdc42f17168
+commit_count: 2
+rows:
+  - sha: bab07efd435c48a7a03e1255de31ed322c927e39
+    source_ref: git:bab07efd435c48a7a03e1255de31ed322c927e39
+    short_sha: bab07ef
+    changed_paths:
+      - .codecrate.toml
+      - .github/workflows/test.yml
+      - .gitignore
+      - .pre-commit-config.yaml
+      - MANIFEST.in
+      - NOTICE
+      - README.md
+      - inflectg2p/__init__.py
+      - inflectg2p/__main__.py
+      - inflectg2p/api.py
+      - inflectg2p/frontend.py
+      - inflectg2p/py.typed
+      - inflectg2p/symbols.py
+      - inflectg2p/types.py
+      - pyproject.toml
+      - tests/test_normalize_no_numbers.py
+      - tests/test_symbols.py
+      - tests/test_version.py
+    stats:
+      files_changed: 18
+      insertions: 779
+      deletions: 1
+    inspected: true
+    inspected_paths:
+      - README.md
+      - inflectg2p/__init__.py
+      - inflectg2p/api.py
+      - inflectg2p/frontend.py
+      - inflectg2p/symbols.py
+      - inflectg2p/types.py
+      - pyproject.toml
+      - tests/test_symbols.py
+    observed_behavior:
+      Introduced the initial Python package and command-line frontend
+      for producing Inflect v2 phonemes and blank-framed token IDs.
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: initial version"
+    target_entry_id: entry-0001
+    notes: ""
+  - sha: 9f87640a0099e32d98ce9dfc0e7b5fdc42f17168
+    source_ref: git:9f87640a0099e32d98ce9dfc0e7b5fdc42f17168
+    short_sha: 9f87640
+    changed_paths:
+      - .github/workflows/python-publish.yml
+      - .github/workflows/test.yml
+      - .ledger/ledger.toml
+      - .ledger/releaseledger/.ledger-project.toml
+      - .ledger/releaseledger/config.toml
+      - .ledger/releaseledger/data/.ledger-project.toml
+      - .ledger/taskledger/.ledger-project.toml
+      - .ledger/taskledger/config.toml
+      - LICENSE
+      - MANIFEST.in
+      - NOTICE
+      - README.md
+      - docs/Makefile
+      - docs/api.md
+      - docs/architecture.md
+      - docs/backends.md
+      - docs/changelog.md
+      - docs/cli.md
+      - docs/codec.md
+      - docs/compatibility.md
+      - docs/conf.py
+      - docs/index.md
+      - docs/installation.md
+      - docs/lexicons.md
+      - docs/make.py
+      - docs/prepared-text.md
+      - docs/quickstart.md
+      - docs/requirements.txt
+      - examples/README.md
+      - examples/backend_modes.py
+      - examples/basic_usage.py
+      - examples/custom_backend.py
+      - examples/direct_g2lex.py
+      - examples/lexicon_selection.py
+      - examples/lexicon_usage.py
+      - examples/result_inspection.py
+      - inflectg2p/__init__.py
+      - inflectg2p/__main__.py
+      - inflectg2p/api.py
+      - inflectg2p/backends/__init__.py
+      - inflectg2p/backends/base.py
+      - inflectg2p/backends/espeak.py
+      - inflectg2p/codec.py
+      - inflectg2p/config.py
+      - inflectg2p/errors.py
+      - inflectg2p/frontend.py
+      - inflectg2p/lexicons/__init__.py
+      - inflectg2p/lexicons/base.py
+      - inflectg2p/lexicons/g2lex.py
+      - inflectg2p/lexicons/lexphon.py
+      - inflectg2p/lexicons/overlay.py
+      - inflectg2p/lexicons/registry.py
+      - inflectg2p/lexicons/spans.py
+      - inflectg2p/types.py
+      - pyproject.toml
+      - tests/goldens/inflect_v2_en_us.json
+      - tests/test_api.py
+      - tests/test_backend.py
+      - tests/test_cli.py
+      - tests/test_codec.py
+      - tests/test_dependency_contract.py
+      - tests/test_espeak_integration.py
+      - tests/test_examples.py
+      - tests/test_goldens.py
+      - tests/test_lexicon_adapters.py
+      - tests/test_lexicon_overlay.py
+      - tests/test_lexicon_spans.py
+      - tests/test_normalize_no_numbers.py
+      - tests/test_packaging.py
+      - tests/test_semantic_boundary.py
+      - tests/test_symbols.py
+      - tools/check_release_artifacts.py
+    stats:
+      files_changed: 72
+      insertions: 3468
+      deletions: 478
+    inspected: true
+    inspected_paths:
+      - README.md
+      - docs/api.md
+      - docs/backends.md
+      - docs/cli.md
+      - docs/installation.md
+      - docs/lexicons.md
+      - inflectg2p/api.py
+      - inflectg2p/backends/espeak.py
+      - inflectg2p/config.py
+      - inflectg2p/lexicons/base.py
+      - inflectg2p/lexicons/g2lex.py
+      - inflectg2p/lexicons/lexphon.py
+      - inflectg2p/lexicons/overlay.py
+      - inflectg2p/lexicons/registry.py
+      - inflectg2p/types.py
+      - pyproject.toml
+    observed_behavior:
+      Added selectable espeakng-runtime configuration, ordered optional
+      Lexphon and local G2Lex pronunciation overlays with hit provenance, CLI controls,
+      and user documentation.
+    public_impact: public
+    decision: accepted
+    stale: false
+    evidence_subject: "feat: use espeak-runtime and other improvements"
+    target_entry_id: entry-0002
+    notes: ""

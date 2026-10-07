@@ -1,0 +1,4590 @@
+ .github/workflows/python-publish.yml            |  56 ++++
+ .github/workflows/test.yml                      |  61 +++-
+ .ledger/ledger.toml                             |  24 ++
+ .ledger/releaseledger/.ledger-project.toml      |   6 +
+ .ledger/releaseledger/config.toml               |  57 ++++
+ .ledger/releaseledger/data/.ledger-project.toml |   6 +
+ .ledger/taskledger/.ledger-project.toml         |   6 +
+ .ledger/taskledger/config.toml                  |   7 +
+ LICENSE                                         |   3 +-
+ MANIFEST.in                                     |  11 +
+ NOTICE                                          |   6 +-
+ README.md                                       |  63 ++--
+ docs/Makefile                                   |   7 +
+ docs/api.md                                     |  46 +++
+ docs/architecture.md                            |  48 +++
+ docs/backends.md                                |  47 +++
+ docs/changelog.md                               |   3 +
+ docs/cli.md                                     |  24 ++
+ docs/codec.md                                   |  13 +
+ docs/compatibility.md                           |  25 ++
+ docs/conf.py                                    |   7 +
+ docs/index.md                                   |  22 ++
+ docs/installation.md                            |  31 ++
+ docs/lexicons.md                                |  73 +++++
+ docs/make.py                                    |  30 ++
+ docs/prepared-text.md                           |  26 ++
+ docs/quickstart.md                              |  22 ++
+ docs/requirements.txt                           |   3 +
+ examples/README.md                              |  20 ++
+ examples/backend_modes.py                       |  15 +
+ examples/basic_usage.py                         |   7 +
+ examples/custom_backend.py                      |  27 ++
+ examples/direct_g2lex.py                        |  19 ++
+ examples/lexicon_selection.py                   |   4 +
+ examples/lexicon_usage.py                       |   8 +
+ examples/result_inspection.py                   |  11 +
+ inflectg2p/__init__.py                          |  64 ++--
+ inflectg2p/__main__.py                          |  56 +++-
+ inflectg2p/api.py                               | 167 ++++++++++-
+ inflectg2p/backends/__init__.py                 |   4 +
+ inflectg2p/backends/base.py                     |  12 +
+ inflectg2p/backends/espeak.py                   |  78 +++++
+ inflectg2p/codec.py                             |  30 ++
+ inflectg2p/config.py                            |  22 ++
+ inflectg2p/errors.py                            |  39 +++
+ inflectg2p/frontend.py                          | 380 +-----------------------
+ inflectg2p/lexicons/__init__.py                 |  35 +++
+ inflectg2p/lexicons/base.py                     |  44 +++
+ inflectg2p/lexicons/g2lex.py                    | 157 ++++++++++
+ inflectg2p/lexicons/lexphon.py                  | 157 ++++++++++
+ inflectg2p/lexicons/overlay.py                  |  94 ++++++
+ inflectg2p/lexicons/registry.py                 | 166 +++++++++++
+ inflectg2p/lexicons/spans.py                    |  64 ++++
+ inflectg2p/types.py                             |  38 ++-
+ pyproject.toml                                  |  36 ++-
+ tests/goldens/inflect_v2_en_us.json             |  80 +++++
+ tests/test_api.py                               | 102 +++++++
+ tests/test_backend.py                           | 138 +++++++++
+ tests/test_cli.py                               |  91 ++++++
+ tests/test_codec.py                             |  51 ++++
+ tests/test_dependency_contract.py               |  48 +++
+ tests/test_espeak_integration.py                |  37 +++
+ tests/test_examples.py                          |  27 ++
+ tests/test_goldens.py                           |  34 +++
+ tests/test_lexicon_adapters.py                  | 241 +++++++++++++++
+ tests/test_lexicon_overlay.py                   | 225 ++++++++++++++
+ tests/test_lexicon_spans.py                     |  20 ++
+ tests/test_normalize_no_numbers.py              |   6 -
+ tests/test_packaging.py                         | 118 ++++++++
+ tests/test_semantic_boundary.py                 |  22 ++
+ tests/test_symbols.py                           |   2 +-
+ tools/check_release_artifacts.py                | 217 ++++++++++++++
+ 72 files changed, 3468 insertions(+), 478 deletions(-)
+
+diff --git a/.github/workflows/python-publish.yml b/.github/workflows/python-publish.yml
+new file mode 100644
+index 0000000..bc8e201
+--- /dev/null
++++ b/.github/workflows/python-publish.yml
+@@ -0,0 +1,56 @@
++name: Publish to PyPI
++
++on:
++  push:
++    tags:
++      - "v*"
++
++permissions:
++  contents: read
++
++jobs:
++  build-and-publish:
++    runs-on: ubuntu-latest
++    environment:
++      name: pypi
++    permissions:
++      contents: read
++      id-token: write
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.13"
++      - name: Validate release tag
++        id: tag
++        shell: bash
++        run: |
++          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
++            echo "Expected a stable vX.Y.Z tag, got: $GITHUB_REF_NAME" >&2
++            exit 1
++          fi
++          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
++      - name: Install release tools
++        run: python -m pip install build twine packaging
++      - name: Build release distributions
++        run: |
++          rm -rf dist build
++          python -m build --sdist --wheel
++      - name: Validate artifacts
++        run: |
++          python -m twine check dist/*
++          python tools/check_release_artifacts.py dist --expected-version "${{ steps.tag.outputs.version }}"
++      - name: Upload exact release artifacts
++        uses: actions/upload-artifact@v4
++        with:
++          name: inflectg2p-${{ steps.tag.outputs.version }}-dist
++          path: dist/*
++          if-no-files-found: error
++      - name: Publish to PyPI
++        uses: pypa/gh-action-pypi-publish@v1.14.1
++        with:
++          packages-dir: dist/
++          password: ${{ secrets.PYPI_API_TOKEN }}
++          attestations: false
+diff --git a/.github/workflows/test.yml b/.github/workflows/test.yml
+index 535565f..a3c46a6 100644
+--- a/.github/workflows/test.yml
++++ b/.github/workflows/test.yml
+@@ -1,18 +1,67 @@
+-name: test
+-on: [push, pull_request]
++name: CI
++
++on:
++  push:
++  pull_request:
++
+ permissions:
+   contents: read
++
+ jobs:
+   test:
+     runs-on: ubuntu-latest
+     strategy:
++      fail-fast: false
+       matrix:
+-        python-version: ["3.10", "3.12", "3.13"]
++        python-version: ["3.10", "3.11", "3.12", "3.13"]
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-python@v5
+         with:
+           python-version: ${{ matrix.python-version }}
+-      - run: python -m pip install -e ".[dev]"
+-      - run: python -m pytest
+-      - run: python -m ruff check inflectg2p tests
++      - name: Install eSpeak NG
++        run: |
++          sudo apt-get update
++          sudo apt-get install --yes espeak-ng
++      - name: Install project and development tools
++        run: python -m pip install -e '.[dev]'
++      - name: Run tests
++        run: python -m pytest
++      - name: Check formatting and lint
++        run: python -m ruff check inflectg2p tests examples docs/make.py tools
++      - name: Check types
++        run: python -m mypy inflectg2p
++      - name: Compile sources and examples
++        run: python -m compileall -q inflectg2p tests tools examples
++
++  docs:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.13"
++      - name: Install documentation dependencies
++        run: python -m pip install -e '.[docs]'
++      - name: Build documentation
++        run: python docs/make.py html
++
++  package:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.13"
++      - name: Install packaging tools
++        run: python -m pip install -e '.[dev]'
++      - name: Build sdist and wheel
++        run: |
++          rm -rf dist build
++          python -m build --sdist --wheel
++      - name: Validate artifacts
++        run: |
++          python -m twine check dist/*
++          python tools/check_release_artifacts.py dist
+diff --git a/.ledger/ledger.toml b/.ledger/ledger.toml
+new file mode 100644
+index 0000000..cc03882
+--- /dev/null
++++ b/.ledger/ledger.toml
+@@ -0,0 +1,24 @@
++schema_version = 3
++
++[project]
++uuid = "bce7eefc-0bff-4bbe-af50-3ac52dec90a6"
++name = "inflectg2p"
++
++[ledgers.taskledger.mounts.data]
++storage = "external"
++root = "../ledger"
++
++[ledgers.taskledger.mounts.runtime]
++storage = "user-data"
++
++[ledgers.taskledger.mounts.logs]
++storage = "user-data"
++
++[ledgers.taskledger.mounts.indexes]
++storage = "cache"
++
++[ledgers.releaseledger.mounts.data]
++storage = "project"
++
++[ledgers.releaseledger.mounts.indexes]
++storage = "cache"
+diff --git a/.ledger/releaseledger/.ledger-project.toml b/.ledger/releaseledger/.ledger-project.toml
+new file mode 100644
+index 0000000..6e97a5e
+--- /dev/null
++++ b/.ledger/releaseledger/.ledger-project.toml
+@@ -0,0 +1,6 @@
++schema_version = 1
++layout_version = 3
++project_uuid = "bce7eefc-0bff-4bbe-af50-3ac52dec90a6"
++tool = "releaseledger"
++mount = "config"
++storage = "project"
+diff --git a/.ledger/releaseledger/config.toml b/.ledger/releaseledger/config.toml
+new file mode 100644
+index 0000000..b440614
+--- /dev/null
++++ b/.ledger/releaseledger/config.toml
+@@ -0,0 +1,57 @@
++config_version = 2
++# Branch-scoped release state. This block is safe to commit.
++ledger_ref = "main"
++ledger_parent_ref = ""
++ledger_branch_guard = "off"
++# Cross-ledger identity. Local record IDs stay unchanged.
++
++[ledger]
++code = "rl"
++# Release defaults.
++
++[release]
++default_changelog = "CHANGELOG.md"
++default_status = "planned"
++allow_dirty_worktree = true
++# Changelog build defaults.
++
++[changelog]
++output = "docs/changelog.md"
++header = ""
++body = """## {% if release.date %}[{{ release.version }}] - {{ release.date }}{% else %}[{{ release.version }}] - Unreleased{% endif %}
++
++{% for group in groups %}
++### {{ group.title }}
++{% for entry in group.entries %}
++- {% if entry.breaking %}**BREAKING:** {% endif %}{{ entry.summary }}
++{% endfor %}
++
++{% endfor %}
++"""
++footer = "<!-- generated by releaseledger -->"
++trim = true
++render_always = false
++postprocessors = []
++standard = ""
++group_mode = "extended"
++link_references = false
++repository_url = ""
++tag_prefix = "v"
++compare_url_template = ""
++release_url_template = ""
++preamble = ""
++semver = false
++unreleased = true
++# Git-first release evidence.
++
++[git]
++enabled = true
++tag_creation = "local"
++default_base = "previous_release_tag"
++default_head = "HEAD"
++previous_tag_patterns = ["v{version}", "{version}"]
++include_merges = "nontrivial"
++require_clean_worktree = false
++max_commits = 500
++max_diff_chars_per_commit = 12000
++candidate_status = "draft"
+diff --git a/.ledger/releaseledger/data/.ledger-project.toml b/.ledger/releaseledger/data/.ledger-project.toml
+new file mode 100644
+index 0000000..ca21019
+--- /dev/null
++++ b/.ledger/releaseledger/data/.ledger-project.toml
+@@ -0,0 +1,6 @@
++schema_version = 1
++layout_version = 3
++project_uuid = "bce7eefc-0bff-4bbe-af50-3ac52dec90a6"
++tool = "releaseledger"
++mount = "data"
++storage = "project"
+diff --git a/.ledger/taskledger/.ledger-project.toml b/.ledger/taskledger/.ledger-project.toml
+new file mode 100644
+index 0000000..de13a32
+--- /dev/null
++++ b/.ledger/taskledger/.ledger-project.toml
+@@ -0,0 +1,6 @@
++schema_version = 1
++layout_version = 3
++project_uuid = "bce7eefc-0bff-4bbe-af50-3ac52dec90a6"
++tool = "taskledger"
++mount = "config"
++storage = "project"
+diff --git a/.ledger/taskledger/config.toml b/.ledger/taskledger/config.toml
+new file mode 100644
+index 0000000..6f94549
+--- /dev/null
++++ b/.ledger/taskledger/config.toml
+@@ -0,0 +1,7 @@
++# Project-local Taskledger configuration.
++# Storage topology belongs to Ledgercore; branch state belongs to data/state.toml.
++config_version = 3
++
++[ledger]
++code = 'tl'
++name = 'taskledger'
+diff --git a/LICENSE b/LICENSE
+index 261eeb9..23f5174 100644
+--- a/LICENSE
++++ b/LICENSE
+@@ -186,7 +186,8 @@
+       same "printed page" as the copyright notice for easier
+       identification within third-party archives.
+
+-   Copyright [yyyy] [name of copyright owner]
++   Copyright Owen Song
++   Copyright inflectg2p contributors
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+diff --git a/MANIFEST.in b/MANIFEST.in
+index 874828b..dc3ebd2 100644
+--- a/MANIFEST.in
++++ b/MANIFEST.in
+@@ -1,4 +1,15 @@
+ include LICENSE
+ include NOTICE
+ include README.md
++include pyproject.toml
+ recursive-include inflectg2p py.typed
++recursive-include docs *.md *.py Makefile requirements.txt
++recursive-include examples *.py *.md
++include tools/check_release_artifacts.py
++recursive-include tests *.py *.json
++prune .github
++prune .ledger
++prune build
++prune dist
++prune .venv
++global-exclude __pycache__ *.py[cod]
+diff --git a/NOTICE b/NOTICE
+index 4d40388..c164d53 100644
+--- a/NOTICE
++++ b/NOTICE
+@@ -1,7 +1,5 @@
+ inflectg2p
+
+-This project contains an independently packaged derivative of the public Inflect v2
+-English frontend released by Owen Song under Apache-2.0.
++This project contains an independently packaged implementation of the public Inflect v2 phoneme and token-ID frontend contract. The upstream Inflect frontend was released by Owen Song under Apache-2.0.
+
+-Third-party dependencies, including phonemizer, eSpeak NG runtime assets, and num2words,
+-retain their own licenses and notices.
++Third-party dependencies and optional pronunciation assets retain their own licenses and notices. eSpeak/eSpeak NG runtime access is provided through espeakng-runtime. Optional lexicon support may use Lexphon and G2Lex.
+diff --git a/README.md b/README.md
+index a47f1c4..8e05e97 100644
+--- a/README.md
++++ b/README.md
+@@ -1,51 +1,58 @@
+ # inflectg2p
+
+-Independent Python packaging of the public **Inflect v2** English text frontend.
+-It performs the same written-text normalization, eSpeak-ng phonemization, verified
+-phoneme overrides, symbol lookup, and VITS blank interspersion used by the public
+-Inflect-Nano-v2 / Inflect-Micro-v2 runners.
++An Inflect v2 phoneme and token-ID frontend for **prepared, speakable English text**.
+
+-The package has a flat layout (no `src/`) and uses Git-tag-driven `setuptools-scm`
+-dynamic versioning.
++`inflectg2p` sends text through `espeakng-runtime`, applies the Inflect symbol inventory, and intersperses VITS-style blank IDs. It does not expand numbers, dates, times, currency, abbreviations, identifiers, or other semantic written forms. Prepare those in your application before calling this package. It does not load a TTS model or synthesize audio.
+
+ ## Install
+
+-```bash
++```console
+ python -m pip install inflectg2p
+ ```
+
++Optional runtime and lexicon extras:
++
++```console
++python -m pip install 'inflectg2p[bundled]'
++python -m pip install 'inflectg2p[lexphon]'
++python -m pip install 'inflectg2p[g2lex]'
++```
++
++Lexicon packages and pronunciation assets are optional. `inflectg2p` never downloads lexicons implicitly. See [installation](docs/installation.md) and [lexicons](docs/lexicons.md).
++
+ ## Python
+
+ ```python
+-from inflectg2p import run_frontend
++from inflectg2p import InflectG2P
+
+-result = run_frontend("The invoice is $12.50 at 9:05 AM.")
+-print(result.normalized_text)
+-print(result.phoneme_text)
++with InflectG2P() as g2p:
++    result = g2p.phonemize_prepared("Hello, world.")
++
++print(result.phonemes)
+ print(result.token_ids)
++print(result.token_count)
+ ```
+
+-`token_ids` are model-ready Inflect v2 IDs: every phoneme-symbol ID is interspersed
+-with blank/pad ID `0`, producing the same `(2*n)+1` framing used by the official ONNX
+-runner.
++`result.text` is the unchanged input. `result.lexicon_hits` reports explicit lexicon matches when configured. The functional helpers `phonemize_prepared`, `phonemes`, and `phoneme_ids` are also available.
++
++## CLI
++
++```console
++inflectg2p 'Hello, world.'
++inflectg2p --espeak-mode cli 'Hello, world.'
++inflectg2p --lexicon en-us:lexhint 'Saskatchewan is fluorescent.'
++```
+
+-## Compatibility target
++The CLI prints JSON containing the prepared text, phonemes, token IDs, and token count. There is no `--normalize` option because semantic preparation belongs to the caller.
+
+-This MVP follows the public v2 frontend contract published in both official releases:
++## Documentation and examples
+
+-- English `en-us` eSpeak phonemization with stress and punctuation preserved;
+-- public normalization rules for numbers, money, dates, times, abbreviations, acronyms,
+-  identifiers, and punctuation;
+-- the two published phoneme overrides;
+-- the published Inflect/Tacotron symbol inventory;
+-- strict symbol lookup, matching upstream failure semantics for unsupported output symbols.
++Start with the [documentation index](docs/index.md). Runnable examples are in [`examples/`](examples/).
+
+-## Dynamic versioning
++## Compatibility
+
+-Versions come from Git tags through `setuptools-scm`. A source archive without Git metadata
+-uses `0.1.dev0`; `inflectg2p.__version__` reads installed distribution metadata.
++The exact contract covers the Inflect v2 symbol inventory, strict symbol validation, and blank framing. eSpeak pronunciation depends on the installed runtime and voice data. See [compatibility](docs/compatibility.md) for the boundaries and golden snapshots.
+
+-## License
++## Version and license
+
+-Apache-2.0. The Inflect frontend code this package derives from is published by Owen Song
+-under Apache-2.0. Third-party dependencies retain their own licenses.
++Versions are derived from Git tags with `setuptools-scm`. The project is licensed under Apache-2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+diff --git a/docs/Makefile b/docs/Makefile
+new file mode 100644
+index 0000000..ce6bf9a
+--- /dev/null
++++ b/docs/Makefile
+@@ -0,0 +1,7 @@
++.PHONY: html clean
++
++html:
++	python make.py html
++
++clean:
++	python make.py clean
+diff --git a/docs/api.md b/docs/api.md
+new file mode 100644
+index 0000000..c741e3a
+--- /dev/null
++++ b/docs/api.md
+@@ -0,0 +1,46 @@
++# Python API
++
++## Frontend class
++
++`InflectG2P` provides reusable scalar and batch operations:
++
++```python
++from inflectg2p import InflectG2P, InflectG2PConfig
++
++config = InflectG2PConfig(voice="en-us", espeak_mode="auto")
++with InflectG2P(config) as g2p:
++    one = g2p.phonemize_prepared("Hello.")
++    many = g2p.phonemize_prepared_batch(["Hello.", "Good morning."])
++```
++
++The class closes a runtime it created. A backend or lexicon lookup passed by the caller remains caller-owned and must be closed by that caller when appropriate. See [backends](backends.md) and [lexicons](lexicons.md).
++
++## Functional helpers
++
++The package root exports:
++
++- `phonemize_prepared(text, ...)`, returning the complete result;
++- `phonemes(text, ...)`, returning the phoneme string;
++- `phoneme_ids(text, ...)`, returning the token-ID tuple.
++
++All helpers accept the same prepared text. They accept optional `InflectG2PConfig`, injected backend or lexicon lookup, and lexicon configuration arguments.
++
++## Result
++
++`PhonemizeResult` is an immutable value with:
++
++- `text`: original prepared input;
++- `phonemes`: rendered phoneme stream, including preserved supported punctuation and spaces;
++- `token_ids`: Inflect symbol IDs with blank ID `0` interspersed;
++- `token_count`: length of `token_ids`;
++- `lexicon_hits`: provenance records for selected lexicon pronunciations.
++
++`LexiconHit` and `LexiconProvenance` identify the matched word, pronunciation source, lexicon ID, key, encoding, and available asset metadata.
++
++## Configuration
++
++`InflectG2PConfig` defaults to voice `en-us`, eSpeak mode `auto`, and automatic runtime discovery. The `espeak_mode` choices are `auto`, `native`, and `cli`. Optional `executable`, `library`, `data`, and `timeout` values are forwarded to `espeakng-runtime`.
++
++## Errors
++
++All package errors derive from `InflectG2PError`. Backend failures use `BackendError`, `BackendUnavailableError`, and `PhonemizationError`. Lexicon errors use `LexiconError`, `LexiconDependencyError`, `LexiconResourceError`, and `LexiconMissError`. Unsupported Inflect symbols raise `MissingSymbolError` with the offending symbol and position.
+diff --git a/docs/architecture.md b/docs/architecture.md
+new file mode 100644
+index 0000000..26daa6d
+--- /dev/null
++++ b/docs/architecture.md
+@@ -0,0 +1,48 @@
++# Architecture
++
++```text
++caller-owned semantic preparation
++              |
++              v
++prepared text
++              |
++              +---- optional ordered lexicon overlay
++              |                  |
++              |          unresolved spans, if enabled
++              |                  v
++              +---------- espeakng-runtime
++                                 |
++                                 v
++                punctuation-preserving renderer
++                                 |
++                                 v
++                  Inflect symbol encoding
++                                 |
++                                 v
++                   blank interspersion
++                                 |
++                                 v
++                       token IDs
++```
++
++## Responsibilities
++
++| Area                      | Responsibility                                                         |
++| ------------------------- | ---------------------------------------------------------------------- |
++| Caller                    | Written-to-spoken semantic preparation and lexicon asset provisioning. |
++| `inflectg2p` API          | Prepared-text operations and immutable result values.                  |
++| `espeakng-runtime`        | Runtime discovery and eSpeak invocation.                               |
++| Inflect codec             | Exact symbol IDs, strict output validation, and blank framing.         |
++| Optional lexicon adapters | Explicit lookup, metadata validation, and provenance.                  |
++
++## Resource ownership
++
++| Resource                                | Owner                                     |
++| --------------------------------------- | ----------------------------------------- |
++| Injected phoneme backend                | Caller                                    |
++| Internally created eSpeak runtime       | `InflectG2P`                              |
++| Injected lexicon lookup                 | Caller                                    |
++| Internally created Lexphon/G2Lex lookup | `InflectG2P`                              |
++| Lexicon installation or provisioning    | Caller or a separate provisioning process |
++
++The core path has no model loading, audio synthesis, semantic expansion, or implicit network access. See [prepared text](prepared-text.md), [backends](backends.md), and [lexicons](lexicons.md) for details.
+diff --git a/docs/backends.md b/docs/backends.md
+new file mode 100644
+index 0000000..c1e558e
+--- /dev/null
++++ b/docs/backends.md
+@@ -0,0 +1,47 @@
++# eSpeak backends
++
++The default backend is `EspeakBackend`, a thin adapter over `espeakng-runtime`. Runtime discovery, native loading, CLI invocation, and runtime-specific diagnostics are delegated to that dependency. `inflectg2p` does not configure `phonemizer` or mutate eSpeak-related environment variables.
++
++## Modes and paths
++
++```python
++from inflectg2p import InflectG2P, InflectG2PConfig
++
++config = InflectG2PConfig(
++    voice="en-us",
++    espeak_mode="auto",  # auto, native, or cli
++    executable=None,
++    library=None,
++    data=None,
++    timeout=None,
++)
++with InflectG2P(config) as g2p:
++    result = g2p.phonemize_prepared("Hello, world.")
++```
++
++Use `native` or `cli` to select a specific runtime path. `executable`, `library`, and `data` are explicit overrides. `timeout` is forwarded to the runtime. The default voice is `en-us`.
++
++## Punctuation transport
++
++The adapter separates supported Inflect punctuation and literal spaces from speakable spans, sends only the spans through eSpeak, then rejoins them in their original positions. It does not translate one punctuation character into another. Supported punctuation comes from the Inflect symbol inventory; unsupported output symbols fail during codec validation.
++
++## Diagnostics and injection
++
++`EspeakBackend.diagnostics` exposes the runtime info object when using the adapter directly:
++
++```python
++from inflectg2p import InflectG2PConfig
++from inflectg2p.backends import EspeakBackend
++
++config = InflectG2PConfig()
++
++backend = EspeakBackend(config)
++try:
++    print(backend.diagnostics)
++finally:
++    backend.close()
++```
++
++Applications and tests can inject a backend implementing `phonemize(text, *, voice)`, `phonemize_many(texts, *, voice)`, and `close()`. An injected backend remains caller-owned. `InflectG2P` closes only a backend that it created.
++
++With fallback disabled and a configured lexicon lookup, no eSpeak runtime is constructed. A lexicon miss then raises `LexiconMissError`.
+diff --git a/docs/changelog.md b/docs/changelog.md
+new file mode 100644
+index 0000000..decd7d0
+--- /dev/null
++++ b/docs/changelog.md
+@@ -0,0 +1,3 @@
++# Changelog
++
++No version has been published from this checkout. Release notes are maintained in the project changelog and will be linked here when a release is prepared. The current implementation targets the v0.1.0 scope described in the repository brief.
+diff --git a/docs/cli.md b/docs/cli.md
+new file mode 100644
+index 0000000..445f6da
+--- /dev/null
++++ b/docs/cli.md
+@@ -0,0 +1,24 @@
++# Command-line interface
++
++The CLI consumes prepared text as one positional argument and prints one JSON object to standard output:
++
++```console
++inflectg2p 'Hello, world.'
++inflectg2p --espeak-mode cli 'Hello, world.'
++inflectg2p --lexicon en-us:lexhint 'Saskatchewan is fluorescent.'
++```
++
++The output shape is:
++
++```json
++{
++  "text": "Hello, world.",
++  "phonemes": "...",
++  "token_ids": [0, 1, 0],
++  "token_count": 3
++}
++```
++
++Available runtime options are `--espeak-mode auto|native|cli`, `--executable`, `--library`, `--data`, and `--timeout`. Repeat `--lexicon` to set an ordered list. `--no-espeak-fallback` requires at least one configured lexicon and makes unresolved words an error.
++
++Errors are written to standard error without a traceback and return status `2`. Successful calls return status `0`. There is no `--normalize` flag. Prepare semantic written forms before passing text to the CLI.
+diff --git a/docs/codec.md b/docs/codec.md
+new file mode 100644
+index 0000000..13ef5f2
+--- /dev/null
++++ b/docs/codec.md
+@@ -0,0 +1,13 @@
++# Inflect codec
++
++The codec maps each character in the phoneme stream through the public Inflect v2 symbol inventory in `inflectg2p.symbols`. The inventory and character-to-ID mapping are exact frontend data, independent of the eSpeak implementation.
++
++For symbol IDs `s`, Inflect blank interspersion produces:
++
++```text
++[0, s0, 0, s1, 0, ..., sn, 0]
++```
++
++The resulting length is `2 * len(s) + 1`. Blank/pad ID is `0`; the space symbol is encoded as a regular inventory symbol.
++
++`encode_phonemes`, `intersperse_blanks`, and `phoneme_ids` are available from the package root. An empty phoneme stream has no model-ready token sequence and raises `ValueError`. A symbol absent from the inventory raises `MissingSymbolError`, which reports the symbol and its position rather than silently dropping it.
+diff --git a/docs/compatibility.md b/docs/compatibility.md
+new file mode 100644
+index 0000000..fe99923
+--- /dev/null
++++ b/docs/compatibility.md
+@@ -0,0 +1,25 @@
++# Compatibility
++
++Compatibility is defined in layers. This package does not claim blanket equivalence with every historical Inflect runner or every eSpeak installation.
++
++## Exact and structural behavior
++
++- The checked-in Inflect v2 symbol inventory and symbol-to-ID mapping.
++- Blank/pad ID `0` and blank framing of `(2 * symbol_count) + 1` IDs.
++- Strict failure for output symbols outside that inventory.
++- Preservation of supported punctuation and literal spaces around eSpeak-rendered spans.
++- Prepared input is not semantically rewritten.
++
++The exact frontend snapshots are in [`tests/goldens/inflect_v2_en_us.json`](../tests/goldens/inflect_v2_en_us.json). They record phoneme strings and token IDs for review. Runtime integration tests separately exercise `auto`, CLI, and native modes when available.
++
++## Runtime-dependent behavior
++
++Pronunciation varies with eSpeak version, voice data, and runtime mode. `espeakng-runtime` may choose a different CLI or native installation on different systems. Therefore exact pronunciation parity is not promised across runtime versions. The integration suite checks punctuation transport, stress presence, Unicode IPA encoding, and scalar/batch consistency on the runtime under test.
++
++The old project-specific hard-coded pronunciation overrides are intentionally absent. Use an explicit lexicon when an application needs a pronunciation exception. A lexicon-selected pronunciation is an intentional override, not an unqualified claim of pure eSpeak parity.
++
++## Out of scope
++
++- Semantic expansion of numbers, dates, times, currency, units, identifiers, acronyms, or abbreviations.
++- Loading a TTS model or generating audio.
++- Automatic pronunciation-data installation.
+diff --git a/docs/conf.py b/docs/conf.py
+new file mode 100644
+index 0000000..9659e72
+--- /dev/null
++++ b/docs/conf.py
+@@ -0,0 +1,7 @@
++project = "inflectg2p"
++master_doc = "index"
++root_doc = "index"
++extensions = ["myst_parser"]
++exclude_patterns = ["_build"]
++html_theme = "sphinx_rtd_theme"
++html_title = "inflectg2p documentation"
+diff --git a/docs/index.md b/docs/index.md
+new file mode 100644
+index 0000000..61e27e0
+--- /dev/null
++++ b/docs/index.md
+@@ -0,0 +1,22 @@
++# inflectg2p documentation
++
++`inflectg2p` converts prepared, speakable English text into Inflect-compatible phonemes and token IDs. It does not perform semantic written-to-spoken preparation, load a TTS model, or synthesize audio.
++
++The library uses `espeakng-runtime` directly. Optional pronunciation lexicons are explicitly configured and never installed during lookup. Runnable scripts are maintained in the repository's `examples/` directory.
++
++```{toctree}
++:maxdepth: 2
++:caption: Guides
++
++installation
++quickstart
++prepared-text
++api
++backends
++lexicons
++codec
++compatibility
++cli
++architecture
++changelog
++```
+diff --git a/docs/installation.md b/docs/installation.md
+new file mode 100644
+index 0000000..275af41
+--- /dev/null
++++ b/docs/installation.md
+@@ -0,0 +1,31 @@
++# Installation
++
++Install the core package with pip:
++
++```console
++python -m pip install inflectg2p
++```
++
++The core dependency is `espeakng-runtime`. It discovers an available eSpeak runtime according to its configured mode. A system eSpeak NG installation may be used where available. To install the runtime's bundled assets, use:
++
++```console
++python -m pip install 'inflectg2p[bundled]'
++```
++
++Optional pronunciation adapters are installed separately:
++
++```console
++python -m pip install 'inflectg2p[lexphon]'
++python -m pip install 'inflectg2p[g2lex]'
++```
++
++The `lexicons` extra is an alias for the Lexphon adapter. Installing an adapter does not install or download pronunciation assets. Provision assets with the relevant lexicon tooling before using them.
++
++For documentation builds and development:
++
++```console
++python -m pip install 'inflectg2p[docs]'
++python -m pip install 'inflectg2p[dev]'
++```
++
++`inflectg2p` does not configure `phonemizer`, mutate eSpeak environment variables, or install semantic-preparation packages. Applications that verbalize numbers, dates, times, currencies, abbreviations, or other written forms should install and call their own preparation layer before passing text here.
+diff --git a/docs/lexicons.md b/docs/lexicons.md
+new file mode 100644
+index 0000000..234e393
+--- /dev/null
++++ b/docs/lexicons.md
+@@ -0,0 +1,73 @@
++# Lexicons
++
++Pronunciation lexicons are optional overlays for prepared text. Precedence is:
++
++1. first pronunciation hit from configured lexicons, in the order configured;
++2. `espeakng-runtime` for unresolved spans, if fallback is enabled;
++3. Inflect symbol validation and token encoding.
++
++`inflectg2p` does not download or install lexicons. A lexicon miss is distinct from an invalid or unavailable resource. Invalid metadata, unsupported pronunciation encoding, lookup failures, and unencodable IPA are errors. The supported lexicon pronunciation encoding for v0.1.0 is generic IPA.
++
++## Managed Lexphon assets
++
++Install the adapter and provision an asset separately. For example:
++
++```console
++python -m pip install 'inflectg2p[lexphon]'
++lexphon data available en-US
++lexphon data install en-us:lexhint
++lexphon data verify en-us:lexhint
++```
++
++Inspect locally provisioned assets with:
++
++```python
++from inflectg2p import available_lexicons, lexicon_info
++
++for name in available_lexicons("en-US"):
++    print(name, lexicon_info("en-US", name))
++```
++
++Use a provisioned lexicon by name:
++
++```python
++from inflectg2p import InflectG2P
++
++with InflectG2P(lexicons=("en-us:lexhint",)) as g2p:
++    result = g2p.phonemize_prepared("Saskatchewan is fluorescent.")
++
++print(result.phonemes)
++print(result.lexicon_hits)
++```
++
++The `en-us:lexhint` asset must already be installed in the Lexphon store. Runtime lookup never performs provisioning.
++
++To disable fallback, provide at least one lexicon and set `use_espeak_fallback=False`. A missing word raises `LexiconMissError` rather than invoking eSpeak.
++
++## Direct local G2Lex files
++
++Install the optional adapter, then load an explicit `.g2lex` resource:
++
++```console
++python -m pip install 'inflectg2p[g2lex]'
++g2lex inspect ./build/custom.g2lex
++```
++
++```python
++from inflectg2p import InflectG2P
++from inflectg2p.lexicons import G2LexLookup
++
++lookup = G2LexLookup(["./build/custom.g2lex"], language="en-US")
++try:
++    with InflectG2P(lexicon_backend=lookup) as g2p:
++        result = g2p.phonemize_prepared("AcmeWidget")
++        print(result.phonemes)
++finally:
++    lookup.close()
++```
++
++An injected lookup remains caller-owned. `G2LexLookup` opens only the given local file and validates language, kind, and pronunciation encoding. Multiple assets are searched in order. Lexicon hits retain their source, matched key, ID, encoding, and available version/path metadata in `result.lexicon_hits`.
++
++## Custom lookup
++
++Applications can inject their own `PronunciationLookup` implementation. It returns `LexiconPronunciation` records in generic IPA and implements `lookup`, `lookup_many`, and `close`. This is also the preferred way to test overlay behavior without requiring optional packages or provisioned data.
+diff --git a/docs/make.py b/docs/make.py
+new file mode 100644
+index 0000000..5582775
+--- /dev/null
++++ b/docs/make.py
+@@ -0,0 +1,30 @@
++from __future__ import annotations
++
++import argparse
++import shutil
++import subprocess
++import sys
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++DOCS = ROOT / "docs"
++BUILD = ROOT / "build" / "docs"
++
++
++def main() -> int:
++    parser = argparse.ArgumentParser(description="Build inflectg2p documentation.")
++    parser.add_argument("target", choices=("html", "clean"), nargs="?", default="html")
++    target = parser.parse_args().target
++    if target == "clean":
++        shutil.rmtree(BUILD, ignore_errors=True)
++        return 0
++    output = BUILD / target
++    return subprocess.run(
++        [sys.executable, "-m", "sphinx", "-b", target, str(DOCS), str(output)],
++        cwd=ROOT,
++        check=False,
++    ).returncode
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/docs/prepared-text.md b/docs/prepared-text.md
+new file mode 100644
+index 0000000..af89612
+--- /dev/null
++++ b/docs/prepared-text.md
+@@ -0,0 +1,26 @@
++# Prepared-text boundary
++
++`inflectg2p` starts at prepared, speakable English text. It does not decide how written semantic forms should be spoken. Numbers, currency, units, dates, times, abbreviations, URLs, versions, identifiers, and application-specific names must be prepared before G2P.
++
++```text
++application text
++       |
++       | caller-owned semantic preparation
++       v
++prepared, speakable English text
++       |
++       | inflectg2p
++       v
++phonemes and Inflect token IDs
++```
++
++For example, call an application-owned preparation function before phonemization:
++
++```python
++prepared_text = application_prepare(source_text)
++result = g2p.phonemize_prepared(prepared_text)
++```
++
++`application_prepare` is a placeholder for your application's own policy, not an `inflectg2p` API. This project does not depend on or prescribe a particular number, abbreviation, or semantic-normalization package.
++
++The frontend preserves the prepared input in `result.text`. It does not rewrite punctuation into different punctuation or return a normalized-text field. eSpeak rendering transports supported punctuation and spaces through phonemization.
+diff --git a/docs/quickstart.md b/docs/quickstart.md
+new file mode 100644
+index 0000000..24f490e
+--- /dev/null
++++ b/docs/quickstart.md
+@@ -0,0 +1,22 @@
++# Quick start
++
++```python
++from inflectg2p import InflectG2P
++
++with InflectG2P() as g2p:
++    result = g2p.phonemize_prepared("Hello, world.")
++
++print(result.phonemes)
++print(result.token_ids)
++print(result.token_count)
++```
++
++The input string is prepared text. `result.text` preserves it exactly. The frontend performs phonemization, symbol encoding, and blank interspersion only.
++
++The equivalent command-line call is:
++
++```console
++inflectg2p 'Hello, world.'
++```
++
++See [prepared text](prepared-text.md) for the input contract. Reusable scripts are in the repository's `examples/` directory.
+diff --git a/docs/requirements.txt b/docs/requirements.txt
+new file mode 100644
+index 0000000..4c6fb17
+--- /dev/null
++++ b/docs/requirements.txt
+@@ -0,0 +1,3 @@
++sphinx>=8
++myst-parser>=4
++sphinx-rtd-theme>=3
+diff --git a/examples/README.md b/examples/README.md
+new file mode 100644
+index 0000000..5778e50
+--- /dev/null
++++ b/examples/README.md
+@@ -0,0 +1,20 @@
++# Examples
++
++Run from the repository root after installing the project:
++
++```console
++python examples/basic_usage.py
++python examples/backend_modes.py --mode auto
++python examples/result_inspection.py
++python examples/custom_backend.py
++```
++
++These examples need no pronunciation lexicon assets. The first three use an available eSpeak runtime. `custom_backend.py` is deterministic and does not invoke eSpeak.
++
++Lexicon examples are explicit about optional packages and provisioned resources:
++
++- `lexicon_selection.py` requires the `lexphon` extra;
++- `lexicon_usage.py` requires the `en-us:lexhint` asset to be installed in the Lexphon store;
++- `direct_g2lex.py` requires the `g2lex` extra and a local `.g2lex` file.
++
++None of the examples installs assets automatically.
+diff --git a/examples/backend_modes.py b/examples/backend_modes.py
+new file mode 100644
+index 0000000..342ea73
+--- /dev/null
++++ b/examples/backend_modes.py
+@@ -0,0 +1,15 @@
++import argparse
++
++from inflectg2p import InflectG2P, InflectG2PConfig
++
++parser = argparse.ArgumentParser()
++parser.add_argument("text", nargs="?", default="Hello, world.")
++parser.add_argument("--mode", choices=("auto", "native", "cli"), default="auto")
++args = parser.parse_args()
++
++config = InflectG2PConfig(espeak_mode=args.mode)
++with InflectG2P(config) as g2p:
++    result = g2p.phonemize_prepared(args.text)
++
++print(result.phonemes)
++print(result.token_ids)
+diff --git a/examples/basic_usage.py b/examples/basic_usage.py
+new file mode 100644
+index 0000000..d7ba5dc
+--- /dev/null
++++ b/examples/basic_usage.py
+@@ -0,0 +1,7 @@
++from inflectg2p import InflectG2P
++
++with InflectG2P() as g2p:
++    result = g2p.phonemize_prepared("Hello, world.")
++
++print(result.phonemes)
++print(result.token_ids)
+diff --git a/examples/custom_backend.py b/examples/custom_backend.py
+new file mode 100644
+index 0000000..5aac898
+--- /dev/null
++++ b/examples/custom_backend.py
+@@ -0,0 +1,27 @@
++from collections.abc import Sequence
++
++from inflectg2p import InflectG2P
++
++
++class FixedBackend:
++    def phonemize(self, text: str, *, voice: str) -> str:
++        print(f"Received unchanged text for {voice}: {text!r}")
++        return "həlˈoʊ, wˈɜːld."
++
++    def phonemize_many(self, texts: Sequence[str], *, voice: str) -> list[str]:
++        return [self.phonemize(text, voice=voice) for text in texts]
++
++    def close(self) -> None:
++        print("Caller closes the injected backend.")
++
++
++backend = FixedBackend()
++g2p = InflectG2P(backend=backend)
++try:
++    result = g2p.phonemize_prepared("Hello, world.")
++finally:
++    g2p.close()
++    backend.close()
++
++print(result.phonemes)
++print(result.token_ids)
+diff --git a/examples/direct_g2lex.py b/examples/direct_g2lex.py
+new file mode 100644
+index 0000000..b4b6d4c
+--- /dev/null
++++ b/examples/direct_g2lex.py
+@@ -0,0 +1,19 @@
++import argparse
++
++from inflectg2p import InflectG2P
++from inflectg2p.lexicons import G2LexLookup
++
++parser = argparse.ArgumentParser()
++parser.add_argument("asset", help="path to an explicitly provisioned .g2lex file")
++parser.add_argument("text", help="prepared, speakable text")
++args = parser.parse_args()
++
++lookup = G2LexLookup([args.asset], language="en-US")
++try:
++    with InflectG2P(lexicon_backend=lookup) as g2p:
++        result = g2p.phonemize_prepared(args.text)
++finally:
++    lookup.close()
++
++print(result.phonemes)
++print(result.lexicon_hits)
+diff --git a/examples/lexicon_selection.py b/examples/lexicon_selection.py
+new file mode 100644
+index 0000000..e715df8
+--- /dev/null
++++ b/examples/lexicon_selection.py
+@@ -0,0 +1,4 @@
++from inflectg2p import available_lexicons, lexicon_info
++
++for name in available_lexicons("en-US"):
++    print(name, lexicon_info("en-US", name))
+diff --git a/examples/lexicon_usage.py b/examples/lexicon_usage.py
+new file mode 100644
+index 0000000..9359657
+--- /dev/null
++++ b/examples/lexicon_usage.py
+@@ -0,0 +1,8 @@
++from inflectg2p import InflectG2P
++
++with InflectG2P(lexicons=("en-us:lexhint",)) as g2p:
++    result = g2p.phonemize_prepared("Saskatchewan is fluorescent.")
++
++print(result.phonemes)
++print(result.token_ids)
++print(result.lexicon_hits)
+diff --git a/examples/result_inspection.py b/examples/result_inspection.py
+new file mode 100644
+index 0000000..e39edab
+--- /dev/null
++++ b/examples/result_inspection.py
+@@ -0,0 +1,11 @@
++from inflectg2p import InflectG2P
++
++text = "Hello, world."
++with InflectG2P() as g2p:
++    result = g2p.phonemize_prepared(text)
++
++print("prepared text:", result.text)
++print("phonemes:", result.phonemes)
++print("token IDs:", result.token_ids)
++print("token count:", result.token_count)
++print("lexicon hits:", result.lexicon_hits)
+diff --git a/inflectg2p/__init__.py b/inflectg2p/__init__.py
+index 5f173d2..8f1791e 100644
+--- a/inflectg2p/__init__.py
++++ b/inflectg2p/__init__.py
+@@ -1,26 +1,25 @@
+-"""Independent Inflect v2 English G2P and token-ID frontend."""
++"""Prepared-text phoneme and token-ID frontend for Inflect v2."""
+
+ from importlib.metadata import PackageNotFoundError
+ from importlib.metadata import version as _distribution_version
+
+-from .api import InflectG2P, phonemize, token_ids
+-from .frontend import (
+-    ABBREVIATIONS,
+-    LETTER_NAMES,
+-    MONTHS,
+-    PHONEME_OVERRIDES,
+-    WORD_OVERRIDES,
+-    encode_phonemes,
+-    intersperse_blanks,
+-    normalize_text,
+-    phoneme_ids,
+-    phonemize_normalized,
+-    phonemize_normalized_batch,
+-    run_frontend,
+-    run_frontend_batch,
++from .api import InflectG2P, phoneme_ids, phonemes, phonemize_prepared
++from .codec import encode_phonemes, intersperse_blanks
++from .config import InflectG2PConfig
++from .errors import (
++    BackendError,
++    BackendUnavailableError,
++    InflectG2PError,
++    LexiconDependencyError,
++    LexiconError,
++    LexiconMissError,
++    LexiconResourceError,
++    MissingSymbolError,
++    PhonemizationError,
+ )
+-from .symbols import BLANK_ID, SPACE_ID, SYMBOLS, SYMBOL_TO_ID
+-from .types import FrontendResult
++from .lexicons import available_lexicons, lexicon_info
++from .symbols import BLANK_ID, SPACE_ID, SYMBOL_TO_ID, SYMBOLS
++from .types import LexiconHit, PhonemizeResult
+
+ try:
+     __version__ = _distribution_version("inflectg2p")
+@@ -29,25 +28,28 @@ except PackageNotFoundError:
+
+ __all__ = [
+     "__version__",
+-    "ABBREVIATIONS",
++    "BackendError",
++    "BackendUnavailableError",
+     "BLANK_ID",
+-    "FrontendResult",
+     "InflectG2P",
+-    "LETTER_NAMES",
+-    "MONTHS",
+-    "PHONEME_OVERRIDES",
++    "InflectG2PConfig",
++    "InflectG2PError",
++    "LexiconDependencyError",
++    "LexiconError",
++    "LexiconHit",
++    "LexiconMissError",
++    "LexiconResourceError",
++    "MissingSymbolError",
++    "PhonemizeResult",
++    "PhonemizationError",
+     "SPACE_ID",
+     "SYMBOLS",
+     "SYMBOL_TO_ID",
+-    "WORD_OVERRIDES",
++    "available_lexicons",
+     "encode_phonemes",
+     "intersperse_blanks",
+-    "normalize_text",
++    "lexicon_info",
+     "phoneme_ids",
+-    "phonemize",
+-    "phonemize_normalized",
+-    "phonemize_normalized_batch",
+-    "run_frontend",
+-    "run_frontend_batch",
+-    "token_ids",
++    "phonemes",
++    "phonemize_prepared",
+ ]
+diff --git a/inflectg2p/__main__.py b/inflectg2p/__main__.py
+index 6db80b9..9b7a65a 100644
+--- a/inflectg2p/__main__.py
++++ b/inflectg2p/__main__.py
+@@ -2,17 +2,57 @@ from __future__ import annotations
+
+ import argparse
+ import json
+-from dataclasses import asdict
++import sys
++from collections.abc import Sequence
+
+-from .frontend import run_frontend
++from .api import InflectG2P
++from .config import InflectG2PConfig
++from .errors import InflectG2PError
+
+
+-def main() -> int:
+-    parser = argparse.ArgumentParser(description="Run the Inflect v2 English text frontend")
+-    parser.add_argument("text")
+-    args = parser.parse_args()
+-    result = run_frontend(args.text)
+-    print(json.dumps(asdict(result), ensure_ascii=False))
++def main(argv: Sequence[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(
++        description=("Phonemize prepared English text for the Inflect v2 symbol/token-ID frontend.")
++    )
++    parser.add_argument("text", help="prepared, speakable English text")
++    parser.add_argument("--espeak-mode", choices=("auto", "native", "cli"), default="auto")
++    parser.add_argument("--executable")
++    parser.add_argument("--library")
++    parser.add_argument("--data")
++    parser.add_argument("--timeout", type=float)
++    parser.add_argument("--lexicon", action="append", dest="lexicons")
++    parser.add_argument("--no-espeak-fallback", action="store_true")
++    arguments = parser.parse_args(argv)
++
++    try:
++        config = InflectG2PConfig(
++            espeak_mode=arguments.espeak_mode,
++            executable=arguments.executable,
++            library=arguments.library,
++            data=arguments.data,
++            timeout=arguments.timeout,
++        )
++        with InflectG2P(
++            config,
++            lexicons=arguments.lexicons,
++            use_espeak_fallback=not arguments.no_espeak_fallback,
++        ) as g2p:
++            result = g2p.phonemize_prepared(arguments.text)
++    except (InflectG2PError, ValueError) as exc:
++        print(f"inflectg2p: {exc}", file=sys.stderr)
++        return 2
++
++    print(
++        json.dumps(
++            {
++                "text": result.text,
++                "phonemes": result.phonemes,
++                "token_ids": list(result.token_ids),
++                "token_count": result.token_count,
++            },
++            ensure_ascii=False,
++        )
++    )
+     return 0
+
+
+diff --git a/inflectg2p/api.py b/inflectg2p/api.py
+index f54ba29..3c0fac4 100644
+--- a/inflectg2p/api.py
++++ b/inflectg2p/api.py
+@@ -1,32 +1,169 @@
+ from __future__ import annotations
+
+-from .frontend import run_frontend, run_frontend_batch
+-from .types import FrontendResult
++from collections.abc import Sequence
++from typing import Any
++
++from .backends import EspeakBackend, PhonemeBackend
++from .config import InflectG2PConfig
++from .errors import BackendError, InflectG2PError, PhonemizationError
++from .frontend import result_from_phonemes
++from .lexicons import PronunciationLookup, apply_lexicon_overlay, create_lookup
++from .types import LexiconHit, PhonemizeResult
+
+
+ class InflectG2P:
+-    """Reusable Inflect v2 text frontend.
++    """Convert caller-prepared English text to Inflect phonemes and token IDs."""
++
++    def __init__(
++        self,
++        config: InflectG2PConfig | None = None,
++        *,
++        backend: PhonemeBackend | None = None,
++        lexicons: str | Sequence[str] | None = None,
++        lexicon_backend: PronunciationLookup | None = None,
++        lexicon_store: Any = None,
++        use_espeak_fallback: bool = True,
++    ) -> None:
++        if lexicon_backend is not None and lexicons is not None:
++            raise ValueError("Pass lexicons or lexicon_backend, not both.")
++        if not use_espeak_fallback and lexicon_backend is None and not lexicons:
++            raise ValueError("Disabling eSpeak fallback requires a lexicon.")
++        self.config = config or InflectG2PConfig()
++        self._owns_backend = backend is None and use_espeak_fallback
++        self._backend: PhonemeBackend | None = (
++            EspeakBackend(self.config) if backend is None and use_espeak_fallback else backend
++        )
++        self._lexicon_backend = (
++            create_lookup(lexicons, language=self.config.voice, store=lexicon_store)
++            if lexicon_backend is None
++            else lexicon_backend
++        )
++        self._owns_lexicon_backend = lexicon_backend is None and self._lexicon_backend is not None
++        self._use_espeak_fallback = use_espeak_fallback
++        self._closed = False
++
++    def phonemize_prepared(self, text: str) -> PhonemizeResult:
++        self._ensure_open()
++        try:
++            if self._lexicon_backend is None:
++                phonemes = self._phonemize_text(text)
++                hits: tuple[LexiconHit, ...] = ()
++            else:
++                phonemes, hits = apply_lexicon_overlay(
++                    text,
++                    self._lexicon_backend,
++                    self._phonemize_text,
++                    fallback=self._use_espeak_fallback,
++                )
++        except InflectG2PError:
++            raise
++        except Exception as exc:
++            raise PhonemizationError(f"Could not phonemize prepared text: {exc}") from exc
++        return result_from_phonemes(text, phonemes, hits)
+
+-    The upstream public frontend has no per-request speaker or language selector;
+-    Inflect v2 is English-only and uses the ``en-us`` eSpeak voice.
+-    """
++    def phonemize_prepared_batch(self, texts: Sequence[str]) -> list[PhonemizeResult]:
++        self._ensure_open()
++        text_list = list(texts)
++        if self._lexicon_backend is not None:
++            return [self.phonemize_prepared(text) for text in text_list]
++        backend = self._backend
++        if backend is None:
++            raise BackendError("eSpeak fallback is disabled.")
++        try:
++            phoneme_list = backend.phonemize_many(text_list, voice=self.config.voice)
++        except InflectG2PError:
++            raise
++        except Exception as exc:
++            raise PhonemizationError(f"Could not phonemize prepared text batch: {exc}") from exc
++        return [
++            result_from_phonemes(text, phonemes)
++            for text, phonemes in zip(text_list, phoneme_list, strict=True)
++        ]
+
+-    def phonemize(self, text: str) -> FrontendResult:
+-        return run_frontend(text)
++    def _phonemize_text(self, text: str) -> str:
++        if self._backend is None:
++            raise BackendError("eSpeak fallback is disabled.")
++        return self._backend.phonemize(text, voice=self.config.voice)
+
+-    def phonemize_batch(self, texts: list[str], *, jobs: int = 1) -> list[FrontendResult]:
+-        return run_frontend_batch(texts, jobs=jobs)
++    def _ensure_open(self) -> None:
++        if self._closed:
++            raise BackendError("InflectG2P is closed.")
++
++    def close(self) -> None:
++        if self._closed:
++            return
++        self._closed = True
++        if self._owns_backend and self._backend is not None:
++            self._backend.close()
++        if self._owns_lexicon_backend and self._lexicon_backend is not None:
++            self._lexicon_backend.close()
+
+     def __enter__(self) -> InflectG2P:
++        self._ensure_open()
+         return self
+
+     def __exit__(self, *_: object) -> None:
+-        return None
++        self.close()
++
++
++def phonemize_prepared(
++    text: str,
++    config: InflectG2PConfig | None = None,
++    *,
++    backend: PhonemeBackend | None = None,
++    lexicons: str | Sequence[str] | None = None,
++    lexicon_backend: PronunciationLookup | None = None,
++    lexicon_store: Any = None,
++    use_espeak_fallback: bool = True,
++) -> PhonemizeResult:
++    with InflectG2P(
++        config,
++        backend=backend,
++        lexicons=lexicons,
++        lexicon_backend=lexicon_backend,
++        lexicon_store=lexicon_store,
++        use_espeak_fallback=use_espeak_fallback,
++    ) as g2p:
++        return g2p.phonemize_prepared(text)
+
+
+-def phonemize(text: str) -> str:
+-    return run_frontend(text).phoneme_text
++def phonemes(
++    text: str,
++    config: InflectG2PConfig | None = None,
++    *,
++    backend: PhonemeBackend | None = None,
++    lexicons: str | Sequence[str] | None = None,
++    lexicon_backend: PronunciationLookup | None = None,
++    lexicon_store: Any = None,
++    use_espeak_fallback: bool = True,
++) -> str:
++    return phonemize_prepared(
++        text,
++        config,
++        backend=backend,
++        lexicons=lexicons,
++        lexicon_backend=lexicon_backend,
++        lexicon_store=lexicon_store,
++        use_espeak_fallback=use_espeak_fallback,
++    ).phonemes
+
+
+-def token_ids(text: str) -> tuple[int, ...]:
+-    return run_frontend(text).token_ids
++def phoneme_ids(
++    text: str,
++    config: InflectG2PConfig | None = None,
++    *,
++    backend: PhonemeBackend | None = None,
++    lexicons: str | Sequence[str] | None = None,
++    lexicon_backend: PronunciationLookup | None = None,
++    lexicon_store: Any = None,
++    use_espeak_fallback: bool = True,
++) -> tuple[int, ...]:
++    return phonemize_prepared(
++        text,
++        config,
++        backend=backend,
++        lexicons=lexicons,
++        lexicon_backend=lexicon_backend,
++        lexicon_store=lexicon_store,
++        use_espeak_fallback=use_espeak_fallback,
++    ).token_ids
+diff --git a/inflectg2p/backends/__init__.py b/inflectg2p/backends/__init__.py
+new file mode 100644
+index 0000000..cf4ffa0
+--- /dev/null
++++ b/inflectg2p/backends/__init__.py
+@@ -0,0 +1,4 @@
++from .base import PhonemeBackend
++from .espeak import EspeakBackend
++
++__all__ = ["EspeakBackend", "PhonemeBackend"]
+diff --git a/inflectg2p/backends/base.py b/inflectg2p/backends/base.py
+new file mode 100644
+index 0000000..2507107
+--- /dev/null
++++ b/inflectg2p/backends/base.py
+@@ -0,0 +1,12 @@
++from __future__ import annotations
++
++from collections.abc import Sequence
++from typing import Protocol
++
++
++class PhonemeBackend(Protocol):
++    def phonemize(self, text: str, *, voice: str) -> str: ...
++
++    def phonemize_many(self, texts: Sequence[str], *, voice: str) -> list[str]: ...
++
++    def close(self) -> None: ...
+diff --git a/inflectg2p/backends/espeak.py b/inflectg2p/backends/espeak.py
+new file mode 100644
+index 0000000..adfa3b7
+--- /dev/null
++++ b/inflectg2p/backends/espeak.py
+@@ -0,0 +1,78 @@
++from __future__ import annotations
++
++from collections.abc import Callable, Sequence
++
++from espeakng_runtime import EspeakRuntime
++from espeakng_runtime.errors import EspeakError
++
++from ..config import InflectG2PConfig
++from ..errors import BackendUnavailableError, PhonemizationError
++from ..symbols import SYMBOLS
++
++_PUNCTUATION = frozenset(SYMBOLS[1:16])
++
++
++def _split_prepared_text(text: str) -> list[tuple[str, bool]]:
++    """Split speakable spans from Inflect punctuation and literal spaces."""
++    spans: list[tuple[str, bool]] = []
++    start = 0
++    is_speakable: bool | None = None
++    for index, character in enumerate(text):
++        current_is_speakable = character != " " and character not in _PUNCTUATION
++        if is_speakable is None:
++            is_speakable = current_is_speakable
++        elif current_is_speakable != is_speakable:
++            spans.append((text[start:index], is_speakable))
++            start = index
++            is_speakable = current_is_speakable
++    if start < len(text):
++        spans.append((text[start:], bool(is_speakable)))
++    return spans
++
++
++def _render_many(
++    texts: Sequence[str],
++    phonemize_many: Callable[..., list[str]],
++    *,
++    voice: str,
++) -> list[str]:
++    spans_by_text = [_split_prepared_text(text) for text in texts]
++    spoken = [span for spans in spans_by_text for span, speakable in spans if speakable]
++    phonemes = iter(phonemize_many(spoken, voice=voice) if spoken else ())
++    rendered: list[str] = []
++    for spans in spans_by_text:
++        rendered.append("".join(next(phonemes) if speakable else span for span, speakable in spans))
++    return rendered
++
++
++class EspeakBackend:
++    """Punctuation-preserving Inflect adapter for ``espeakng-runtime``."""
++
++    def __init__(self, config: InflectG2PConfig | None = None) -> None:
++        config = config or InflectG2PConfig()
++        try:
++            self._runtime = EspeakRuntime(
++                mode=config.espeak_mode,
++                executable=config.executable,
++                library=config.library,
++                data=config.data,
++                timeout=config.timeout,
++            )
++        except EspeakError as exc:
++            raise BackendUnavailableError(f"Could not initialize eSpeak: {exc}") from exc
++
++    @property
++    def diagnostics(self) -> object:
++        return self._runtime.info
++
++    def phonemize(self, text: str, *, voice: str) -> str:
++        return self.phonemize_many([text], voice=voice)[0]
++
++    def phonemize_many(self, texts: Sequence[str], *, voice: str) -> list[str]:
++        try:
++            return _render_many(texts, self._runtime.phonemize_many, voice=voice)
++        except EspeakError as exc:
++            raise PhonemizationError(f"eSpeak could not phonemize prepared text: {exc}") from exc
++
++    def close(self) -> None:
++        self._runtime.close()
+diff --git a/inflectg2p/codec.py b/inflectg2p/codec.py
+new file mode 100644
+index 0000000..e7511f0
+--- /dev/null
++++ b/inflectg2p/codec.py
+@@ -0,0 +1,30 @@
++from __future__ import annotations
++
++from .errors import MissingSymbolError
++from .symbols import BLANK_ID, SYMBOL_TO_ID
++
++
++def encode_phonemes(phoneme_text: str) -> tuple[int, ...]:
++    """Encode IPA and punctuation using the Inflect symbol inventory."""
++    ids: list[int] = []
++    for position, symbol in enumerate(phoneme_text):
++        try:
++            ids.append(SYMBOL_TO_ID[symbol])
++        except KeyError:
++            raise MissingSymbolError(symbol, position) from None
++    return tuple(ids)
++
++
++def intersperse_blanks(token_ids: tuple[int, ...]) -> tuple[int, ...]:
++    """Add Inflect's blank/pad ID before, between, and after symbol IDs."""
++    output = [BLANK_ID] * (len(token_ids) * 2 + 1)
++    output[1::2] = token_ids
++    return tuple(output)
++
++
++def phoneme_ids(phoneme_text: str) -> tuple[int, ...]:
++    """Encode phonemes and apply Inflect's blank framing."""
++    ids = encode_phonemes(phoneme_text)
++    if not ids:
++        raise ValueError("The phoneme stream contains no speakable tokens.")
++    return intersperse_blanks(ids)
+diff --git a/inflectg2p/config.py b/inflectg2p/config.py
+new file mode 100644
+index 0000000..14ac225
+--- /dev/null
++++ b/inflectg2p/config.py
+@@ -0,0 +1,22 @@
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Literal
++
++
++@dataclass(frozen=True, slots=True)
++class InflectG2PConfig:
++    voice: str = "en-us"
++    espeak_mode: Literal["auto", "native", "cli"] = "auto"
++    executable: str | None = None
++    library: str | None = None
++    data: str | None = None
++    timeout: float | None = None
++
++    def __post_init__(self) -> None:
++        if self.espeak_mode not in {"auto", "native", "cli"}:
++            raise ValueError("espeak_mode must be 'auto', 'native', or 'cli'")
++        if not self.voice.strip():
++            raise ValueError("voice cannot be empty")
++        if self.timeout is not None and self.timeout <= 0:
++            raise ValueError("timeout must be positive")
+diff --git a/inflectg2p/errors.py b/inflectg2p/errors.py
+new file mode 100644
+index 0000000..6a0718a
+--- /dev/null
++++ b/inflectg2p/errors.py
+@@ -0,0 +1,39 @@
++class InflectG2PError(Exception):
++    """Base class for package errors."""
++
++
++class BackendError(InflectG2PError):
++    """Base class for phoneme backend errors."""
++
++
++class BackendUnavailableError(BackendError):
++    """No usable phoneme backend is available."""
++
++
++class PhonemizationError(BackendError):
++    """A backend could not phonemize the supplied prepared text."""
++
++
++class LexiconError(InflectG2PError):
++    """Base class for lexicon errors."""
++
++
++class LexiconDependencyError(LexiconError):
++    """An optional lexicon integration is unavailable."""
++
++
++class LexiconResourceError(LexiconError):
++    """A configured lexicon resource is missing or invalid."""
++
++
++class LexiconMissError(LexiconError):
++    """No configured lexicon contains a requested word."""
++
++
++class MissingSymbolError(InflectG2PError, ValueError):
++    """A phoneme stream contains a symbol absent from the Inflect inventory."""
++
++    def __init__(self, symbol: str, position: int) -> None:
++        self.symbol = symbol
++        self.position = position
++        super().__init__(f"Unsupported phoneme symbol {symbol!r} at position {position}.")
+diff --git a/inflectg2p/frontend.py b/inflectg2p/frontend.py
+index e5836bb..5d805bc 100644
+--- a/inflectg2p/frontend.py
++++ b/inflectg2p/frontend.py
+@@ -1,370 +1,18 @@
+ from __future__ import annotations
+
+-import os
+-import re
+-from datetime import date
+-from pathlib import Path
+-
+-from .symbols import BLANK_ID, SYMBOL_TO_ID
+-from .types import FrontendResult
+-
+-MONTHS = [
+-    "January",
+-    "February",
+-    "March",
+-    "April",
+-    "May",
+-    "June",
+-    "July",
+-    "August",
+-    "September",
+-    "October",
+-    "November",
+-    "December",
+-]
+-
+-WORD_OVERRIDES = {
+-    "Qwen3": "Qwen three",
+-    "Qwen": "Qwen",
+-    "PyTorch": "pie torch",
+-    "SQLite": "ess cue lite",
+-    "USB-C": "you ess bee see",
+-    "RTX 3060": "ar tee ex thirty sixty",
+-    "RTX 3090": "ar tee ex thirty ninety",
+-    "RTX 4090": "ar tee ex forty ninety",
+-    "RTX 5080": "ar tee ex fifty eighty",
+-    "RTX 5090": "ar tee ex fifty ninety",
+-}
+-
+-LETTER_NAMES = {
+-    "A": "ay",
+-    "B": "bee",
+-    "C": "see",
+-    "D": "dee",
+-    "E": "ee",
+-    "F": "eff",
+-    "G": "gee",
+-    "H": "aitch",
+-    "I": "eye",
+-    "J": "jay",
+-    "K": "kay",
+-    "L": "ell",
+-    "M": "em",
+-    "N": "en",
+-    "O": "oh",
+-    "P": "pee",
+-    "Q": "cue",
+-    "R": "ar",
+-    "S": "ess",
+-    "T": "tee",
+-    "U": "you",
+-    "V": "vee",
+-    "W": "double you",
+-    "X": "ex",
+-    "Y": "why",
+-    "Z": "zee",
+-}
+-
+-ABBREVIATIONS = {
+-    "Dr.": "doctor",
+-    "Mr.": "mister",
+-    "Mrs.": "missus",
+-    "Ms.": "miss",
+-    "Prof.": "professor",
+-    "St.": "saint",
+-    "vs.": "versus",
+-    "etc.": "et cetera",
+-    "e.g.": "for example",
+-    "i.e.": "that is",
+-}
+-
+-PUNCT_TRANSLATION = str.maketrans(
+-    {
+-        "\u2018": "'",
+-        "\u2019": "'",
+-        "\u201c": '"',
+-        "\u201d": '"',
+-        "\u2013": "-",
+-        "\u2014": ", ",
+-        "\u2026": "...",
+-        "(": ", ",
+-        ")": ", ",
+-        "[": ", ",
+-        "]": ", ",
+-        "{": ", ",
+-        "}": ", ",
+-    }
+-)
+-
+-PHONEME_OVERRIDES = {
+-    "sˈæskɐtʃˌuːən": "sɐskˈætʃəwən",
+-    "flʊɹɹˈɛsənt": "flʊˈɹɛsənt",
+-}
+-
+-_ESPEAK_CONFIGURED = False
+-
+-
+-def _num2words(value: int | float, *, ordinal: bool = False) -> str:
+-    from num2words import num2words
+-
+-    if ordinal:
+-        text = num2words(value, to="ordinal")
+-    else:
+-        text = num2words(value)
+-    return str(text).replace("-", " ").replace(",", "")
+-
+-
+-def _digit_words(text: str) -> str:
+-    return " ".join(_num2words(int(ch)) for ch in text if ch.isdigit())
+-
+-
+-def _identifier_digits(text: str) -> str:
+-    words: list[str] = []
+-    for index, character in enumerate(text):
+-        if not character.isdigit():
+-            continue
+-        words.append("oh" if character == "0" and index > 0 else _num2words(int(character)))
+-    return " ".join(words)
+-
+-
+-def _expand_identifier_token(token: str) -> str:
+-    match = re.fullmatch(r"([A-Za-z]?)(\d+)([A-Za-z]?)", token)
+-    if match is None:
+-        return token
+-    prefix, digits, suffix = match.groups()
+-    pieces: list[str] = []
+-    if prefix:
+-        pieces.append(LETTER_NAMES[prefix.upper()])
+-    if len(digits) == 3 or digits.startswith("0"):
+-        pieces.append(_identifier_digits(digits))
+-    else:
+-        pieces.append(_num2words(int(digits)))
+-    if suffix:
+-        pieces.append(LETTER_NAMES[suffix.upper()])
+-    return " ".join(pieces)
+-
+-
+-def _expand_labeled_identifier(match: re.Match[str]) -> str:
+-    return f"{match.group(1)} {_expand_identifier_token(match.group(2))}"
+-
+-
+-def _expand_street_number(match: re.Match[str]) -> str:
+-    return _identifier_digits(match.group(1))
+-
+-
+-def _expand_money(match: re.Match[str]) -> str:
+-    raw = match.group(1).replace(",", "")
+-    dollars, _, cents = raw.partition(".")
+-    dollar_count = int(dollars)
+-    parts = [_num2words(dollar_count), "dollar" if dollar_count == 1 else "dollars"]
+-    if cents:
+-        cents = cents[:2].ljust(2, "0")
+-        cent_count = int(cents)
+-        if cent_count:
+-            parts.extend(["and", _num2words(cent_count), "cent" if cent_count == 1 else "cents"])
+-    return " ".join(parts)
+-
+-
+-def _expand_date_slash(match: re.Match[str]) -> str:
+-    month = int(match.group(1))
+-    day = int(match.group(2))
+-    year = int(match.group(3))
+-    try:
+-        date(year, month, day)
+-    except ValueError:
+-        return match.group(0)
+-    return f"{MONTHS[month - 1]} {_num2words(day, ordinal=True)} {_num2words(year)}"
+-
+-
+-def _expand_time(match: re.Match[str]) -> str:
+-    hour = int(match.group(1))
+-    minute = int(match.group(2))
+-    suffix = match.group(3) or ""
+-    pieces = [_num2words(hour)]
+-    if minute == 0:
+-        pieces.append("o clock")
+-    elif minute < 10:
+-        pieces.extend(["oh", _num2words(minute)])
+-    else:
+-        pieces.append(_num2words(minute))
+-    if suffix:
+-        suffix = suffix.lower().replace(".", "")
+-        pieces.extend(list(suffix))
+-    return " ".join(pieces)
+-
+-
+-def _expand_bare_hour_time(match: re.Match[str]) -> str:
+-    hour = int(match.group(1))
+-    suffix = re.sub(r"[^A-Za-z]", "", match.group(2)).lower()
+-    return f"{_num2words(hour)} {' '.join(suffix)}"
+-
+-
+-def _expand_version(match: re.Match[str]) -> str:
+-    return " point ".join(_num2words(int(part)) for part in match.group(0).split("."))
+-
+-
+-def _expand_decimal(match: re.Match[str]) -> str:
+-    whole, frac = match.group(1), match.group(2)
+-    return f"{_num2words(int(whole))} point {_digit_words(frac)}"
+-
+-
+-def _expand_ordinal(match: re.Match[str]) -> str:
+-    return _num2words(int(match.group(1)), ordinal=True)
+-
+-
+-def _expand_number(match: re.Match[str]) -> str:
+-    value = match.group(0).replace(",", "")
+-    if len(value) >= 5 and not value.startswith("20"):
+-        return _digit_words(value)
+-    return _num2words(int(value))
+-
+-
+-def _expand_phone(match: re.Match[str]) -> str:
+-    left, right = match.group(1), match.group(2)
+-    return f"{_digit_words(left)}, {_digit_words(right)}"
+-
+-
+-def _expand_acronym(match: re.Match[str]) -> str:
+-    acronym = match.group(0)
+-    if len(acronym) <= 1:
+-        return acronym
+-    return " ".join(LETTER_NAMES.get(ch, ch) for ch in acronym)
+-
+-
+-def normalize_text(text: str) -> str:
+-    text = text.translate(PUNCT_TRANSLATION)
+-    text = re.sub(r"\s+", " ", text).strip()
+-    for src, dst in WORD_OVERRIDES.items():
+-        text = re.sub(rf"\b{re.escape(src)}\b", dst, text)
+-    for src, dst in ABBREVIATIONS.items():
+-        text = re.sub(rf"\b{re.escape(src)}", dst, text, flags=re.IGNORECASE)
+-    text = re.sub(
+-        r"\b([A-Z])(?:\.([A-Z]))+\.",
+-        lambda match: " ".join(re.findall(r"[A-Z]", match.group(0))),
+-        text,
+-    )
+-    text = re.sub(
+-        r"\b(apartment|apt\.?|suite|unit|room|flight|extension|order|invoice|locker|aisle|gate)\s+([A-Za-z]?\d{1,4}[A-Za-z]?)\b",
+-        _expand_labeled_identifier,
+-        text,
+-        flags=re.IGNORECASE,
+-    )
+-    text = re.sub(
+-        r"\b(\d{3})(?=\s+(?:North|South|East|West)\b)",
+-        _expand_street_number,
+-        text,
+-        flags=re.IGNORECASE,
+-    )
+-    text = re.sub(r"\$(\d[\d,]*(?:\.\d{1,2})?)", _expand_money, text)
+-    text = re.sub(
+-        r"\b(0?[1-9]|1[0-2])/(0?[1-9]|[12]\d|3[01])/(20\d{2}|19\d{2})\b",
+-        _expand_date_slash,
+-        text,
+-    )
+-    text = re.sub(r"\b(\d{1,2}):(\d{2})\s*([AaPp]\.?\s*[Mm]\.?)?\b", _expand_time, text)
+-    text = re.sub(r"\b(\d{1,2})\s*([AaPp]\.?\s*[Mm]\.?)\b", _expand_bare_hour_time, text)
+-    text = re.sub(r"\b(\d{3})-(\d{4})\b", _expand_phone, text)
+-    text = re.sub(r"\b\d+(?:\.\d+){2,}\b", _expand_version, text)
+-    text = re.sub(r"\b(\d+)\.(\d+)\b", _expand_decimal, text)
+-    text = re.sub(r"\b(\d+)(st|nd|rd|th)\b", _expand_ordinal, text, flags=re.IGNORECASE)
+-    text = re.sub(r"\b\d[\d,]*\b", _expand_number, text)
+-    text = re.sub(r"\b[A-Z]{2,}\b", _expand_acronym, text)
+-    text = re.sub(r",(?:\s*,)+", ",", text)
+-    text = re.sub(r",\s*([.!?])", r"\1", text)
+-    text = re.sub(r"\s+([,;:.!?])", r"\1", text)
+-    text = re.sub(r"([,;:.!?])(?=\S)", r"\1 ", text)
+-    return re.sub(r"\s+", " ", text).strip()
+-
+-
+-def _configure_espeak() -> None:
+-    global _ESPEAK_CONFIGURED
+-    if _ESPEAK_CONFIGURED:
+-        return
+-    system_libraries = (
+-        Path("/usr/lib/x86_64-linux-gnu/libespeak-ng.so.1"),
+-        Path("/usr/lib/aarch64-linux-gnu/libespeak-ng.so.1"),
+-        Path("/usr/lib64/libespeak-ng.so.1"),
+-    )
+-    system_library = next((path for path in system_libraries if path.is_file()), None)
+-    if system_library is not None:
+-        os.environ.setdefault("PHONEMIZER_ESPEAK_LIBRARY", str(system_library))
+-    else:
+-        import espeakng_loader
+-
+-        os.environ.setdefault("PHONEMIZER_ESPEAK_LIBRARY", espeakng_loader.get_library_path())
+-        os.environ.setdefault("ESPEAK_DATA_PATH", espeakng_loader.get_data_path())
+-        espeakng_loader.make_library_available()
+-        espeakng_loader.load_library()
+-    _ESPEAK_CONFIGURED = True
+-
+-
+-def _apply_phoneme_overrides(phoneme_text: str) -> str:
+-    for source, replacement in PHONEME_OVERRIDES.items():
+-        phoneme_text = phoneme_text.replace(source, replacement)
+-    return re.sub(r"\s+", " ", phoneme_text).strip()
+-
+-
+-def phonemize_normalized_batch(normalized_texts: list[str], *, jobs: int = 1) -> list[str]:
+-    if not normalized_texts:
+-        return []
+-    _configure_espeak()
+-    from phonemizer import phonemize
+-
+-    rendered = phonemize(
+-        normalized_texts,
+-        language="en-us",
+-        backend="espeak",
+-        strip=True,
+-        preserve_punctuation=True,
+-        with_stress=True,
+-        njobs=jobs,
+-    )
+-    if isinstance(rendered, str):
+-        rendered = [rendered]
+-    return [_apply_phoneme_overrides(text) for text in rendered]
+-
+-
+-def phonemize_normalized(normalized_text: str) -> str:
+-    return phonemize_normalized_batch([normalized_text], jobs=1)[0]
+-
+-
+-def encode_phonemes(phoneme_text: str) -> tuple[int, ...]:
+-    return tuple(SYMBOL_TO_ID[symbol] for symbol in phoneme_text)
+-
+-
+-def intersperse_blanks(token_ids: tuple[int, ...]) -> tuple[int, ...]:
+-    output = [BLANK_ID] * (len(token_ids) * 2 + 1)
+-    output[1::2] = token_ids
+-    return tuple(output)
+-
+-
+-def phoneme_ids(phoneme_text: str) -> tuple[int, ...]:
+-    ids = encode_phonemes(phoneme_text)
+-    if not ids:
+-        raise ValueError("The text frontend produced no speakable tokens.")
+-    return intersperse_blanks(ids)
+-
+-
+-def run_frontend(text: str) -> FrontendResult:
+-    normalized = normalize_text(text)
+-    phonemes = phonemize_normalized(normalized)
+-    return FrontendResult(
+-        raw_text=text,
+-        normalized_text=normalized,
+-        phoneme_text=phonemes,
++from .codec import phoneme_ids
++from .types import LexiconHit, PhonemizeResult
++
++
++def result_from_phonemes(
++    text: str,
++    phonemes: str,
++    lexicon_hits: tuple[LexiconHit, ...] = (),
++) -> PhonemizeResult:
++    """Build a model-ready result from unchanged prepared text and phonemes."""
++    return PhonemizeResult(
++        text=text,
++        phonemes=phonemes,
+         token_ids=phoneme_ids(phonemes),
++        lexicon_hits=lexicon_hits,
+     )
+-
+-
+-def run_frontend_batch(texts: list[str], *, jobs: int = 1) -> list[FrontendResult]:
+-    normalized = [normalize_text(text) for text in texts]
+-    phonemes = phonemize_normalized_batch(normalized, jobs=jobs)
+-    return [
+-        FrontendResult(
+-            raw_text=raw,
+-            normalized_text=norm,
+-            phoneme_text=phones,
+-            token_ids=phoneme_ids(phones),
+-        )
+-        for raw, norm, phones in zip(texts, normalized, phonemes, strict=True)
+-    ]
+diff --git a/inflectg2p/lexicons/__init__.py b/inflectg2p/lexicons/__init__.py
+new file mode 100644
+index 0000000..2b57d04
+--- /dev/null
++++ b/inflectg2p/lexicons/__init__.py
+@@ -0,0 +1,35 @@
++from .base import (
++    SUPPORTED_PHONEME_ENCODINGS,
++    LexiconPronunciation,
++    LexiconProvenance,
++    PronunciationLookup,
++    normalize_phoneme_encoding,
++)
++from .g2lex import G2LexLookup
++from .lexphon import LexphonLookup
++from .overlay import apply_lexicon_overlay
++from .registry import (
++    OrderedLexiconLookup,
++    available_lexicons,
++    create_lookup,
++    lexicon_info,
++)
++from .spans import SourceSpan, scan_source_spans, word_spans
++
++__all__ = [
++    "SUPPORTED_PHONEME_ENCODINGS",
++    "G2LexLookup",
++    "LexiconPronunciation",
++    "LexiconProvenance",
++    "LexphonLookup",
++    "OrderedLexiconLookup",
++    "PronunciationLookup",
++    "SourceSpan",
++    "apply_lexicon_overlay",
++    "available_lexicons",
++    "create_lookup",
++    "lexicon_info",
++    "normalize_phoneme_encoding",
++    "scan_source_spans",
++    "word_spans",
++]
+diff --git a/inflectg2p/lexicons/base.py b/inflectg2p/lexicons/base.py
+new file mode 100644
+index 0000000..e8ca461
+--- /dev/null
++++ b/inflectg2p/lexicons/base.py
+@@ -0,0 +1,44 @@
++from __future__ import annotations
++
++from collections.abc import Sequence
++from typing import Protocol
++
++from ..types import LexiconPronunciation, LexiconProvenance
++
++SUPPORTED_PHONEME_ENCODINGS = frozenset({"ipa"})
++
++
++def normalize_phoneme_encoding(value: object | None) -> str:
++    if value is None:
++        return "ipa"
++    normalized = str(value).strip().casefold().replace("_", "-")
++    if normalized in {"ipa", "unicode-ipa", "ipa-unicode", "generic-ipa"}:
++        return "ipa"
++    raise ValueError(f"unsupported Inflect lexicon pronunciation encoding {value!r}")
++
++
++class PronunciationLookup(Protocol):
++    def lookup(
++        self,
++        word: str,
++        *,
++        tag: str | None = None,
++    ) -> LexiconPronunciation | None: ...
++
++    def lookup_many(
++        self,
++        words: Sequence[str],
++        *,
++        tag: str | None = None,
++    ) -> tuple[LexiconPronunciation | None, ...]: ...
++
++    def close(self) -> None: ...
++
++
++__all__ = [
++    "SUPPORTED_PHONEME_ENCODINGS",
++    "LexiconPronunciation",
++    "LexiconProvenance",
++    "PronunciationLookup",
++    "normalize_phoneme_encoding",
++]
+diff --git a/inflectg2p/lexicons/g2lex.py b/inflectg2p/lexicons/g2lex.py
+new file mode 100644
+index 0000000..2d217ad
+--- /dev/null
++++ b/inflectg2p/lexicons/g2lex.py
+@@ -0,0 +1,157 @@
++from __future__ import annotations
++
++from collections.abc import Sequence
++from pathlib import Path
++from typing import Any
++
++from ..errors import LexiconDependencyError, LexiconResourceError
++from ..types import LexiconPronunciation, LexiconProvenance
++from .base import normalize_phoneme_encoding
++
++
++class G2LexLookup:
++    """Lazy exact-key lookup over explicitly supplied local G2Lex assets."""
++
++    def __init__(self, paths: Sequence[str | Path], *, language: str | None = None) -> None:
++        self.paths = tuple(Path(path) for path in paths)
++        self.language = language
++        self._assets: tuple[Any, ...] | None = None
++        self._provenance: tuple[LexiconProvenance, ...] = ()
++        self._closed = False
++        if not self.paths:
++            raise LexiconResourceError("At least one local G2Lex path is required.")
++
++    @staticmethod
++    def _metadata(asset: Any) -> dict[str, Any]:
++        metadata = getattr(asset, "metadata", None)
++        if not isinstance(metadata, dict):
++            raise LexiconResourceError("G2Lex metadata is not an object.")
++        return metadata
++
++    @staticmethod
++    def _metadata_value(metadata: dict[str, Any], *keys: str) -> Any:
++        source = metadata.get("source")
++        sources = (source,) if isinstance(source, dict) else ()
++        for key in keys:
++            if metadata.get(key) is not None:
++                return metadata[key]
++            for source_metadata in sources:
++                if source_metadata.get(key) is not None:
++                    return source_metadata[key]
++        return None
++
++    def _validate_asset(self, asset: Any, path: Path) -> LexiconProvenance:
++        metadata = self._metadata(asset)
++        declared_language = self._metadata_value(metadata, "language", "locale")
++        if self.language and declared_language:
++            expected = self.language.casefold().replace("_", "-")
++            declared = str(declared_language).casefold().replace("_", "-")
++            if not declared.startswith(expected):
++                raise LexiconResourceError(
++                    f"G2Lex asset {str(path)!r} declares language {declared_language!r}, "
++                    f"not requested {self.language!r}"
++                )
++        kind = self._metadata_value(metadata, "kind")
++        if kind is not None and str(kind).casefold() != "pronunciation":
++            raise LexiconResourceError(f"G2Lex asset {str(path)!r} has unsupported kind {kind!r}.")
++        raw_encoding = self._metadata_value(
++            metadata,
++            "phoneme_encoding",
++            "pronunciation_alphabet",
++            "alphabet",
++        )
++        try:
++            source_encoding = normalize_phoneme_encoding(raw_encoding)
++        except ValueError as exc:
++            raise LexiconResourceError(
++                f"G2Lex asset {str(path)!r} uses unsupported pronunciation encoding "
++                f"{raw_encoding!r}."
++            ) from exc
++        return LexiconProvenance(
++            lexicon_id=str(self._metadata_value(metadata, "id", "lexicon_id") or path),
++            language=str(declared_language) if declared_language is not None else None,
++            source_encoding=source_encoding,
++            data_version=self._optional_string(
++                self._metadata_value(metadata, "data_version", "version")
++            ),
++            asset_path=str(path),
++        )
++
++    @staticmethod
++    def _optional_string(value: object | None) -> str | None:
++        return None if value is None else str(value)
++
++    def _ensure_assets(self) -> tuple[Any, ...]:
++        if self._closed:
++            raise LexiconResourceError("G2Lex lookup adapter is closed.")
++        if self._assets is not None:
++            return self._assets
++        for path in self.paths:
++            if not path.is_file():
++                raise LexiconResourceError(f"G2Lex asset does not exist: {path}")
++        try:
++            import g2lex
++        except ImportError as exc:
++            raise LexiconDependencyError(
++                'Direct G2Lex support requires the optional extra. Install "inflectg2p[g2lex]".'
++            ) from exc
++
++        assets: list[Any] = []
++        provenance: list[LexiconProvenance] = []
++        try:
++            for path in self.paths:
++                asset = g2lex.open(path)
++                assets.append(asset)
++                provenance.append(self._validate_asset(asset, path))
++        except LexiconResourceError:
++            for asset in assets:
++                asset.close()
++            raise
++        except Exception as exc:
++            for asset in assets:
++                asset.close()
++            raise LexiconResourceError("Could not open configured G2Lex asset.") from exc
++        self._assets = tuple(assets)
++        self._provenance = tuple(provenance)
++        return self._assets
++
++    def lookup(self, word: str, *, tag: str | None = None) -> LexiconPronunciation | None:
++        assets = self._ensure_assets()
++        try:
++            for asset, path, provenance in zip(assets, self.paths, self._provenance, strict=True):
++                value = asset.lookup(word, tag=tag)
++                if value is not None:
++                    return LexiconPronunciation(
++                        pronunciation=str(value),
++                        source=f"g2lex:{path}",
++                        lexicon_id=provenance.lexicon_id,
++                        matched_key=word,
++                        source_encoding=provenance.source_encoding,
++                        provenance=provenance,
++                    )
++        except Exception as exc:
++            if isinstance(exc, LexiconResourceError):
++                raise
++            raise LexiconResourceError(f"G2Lex lookup failed for {word!r}.") from exc
++        return None
++
++    def lookup_many(
++        self,
++        words: Sequence[str],
++        *,
++        tag: str | None = None,
++    ) -> tuple[LexiconPronunciation | None, ...]:
++        return tuple(self.lookup(word, tag=tag) for word in words)
++
++    def close(self) -> None:
++        if self._assets is not None:
++            for asset in self._assets:
++                asset.close()
++        self._assets = None
++        self._closed = True
++
++    def __enter__(self) -> G2LexLookup:
++        return self
++
++    def __exit__(self, *_: object) -> None:
++        self.close()
+diff --git a/inflectg2p/lexicons/lexphon.py b/inflectg2p/lexicons/lexphon.py
+new file mode 100644
+index 0000000..6d02cfa
+--- /dev/null
++++ b/inflectg2p/lexicons/lexphon.py
+@@ -0,0 +1,157 @@
++from __future__ import annotations
++
++from collections.abc import Sequence
++from pathlib import Path
++from typing import Any
++
++from ..errors import LexiconDependencyError, LexiconResourceError
++from ..types import LexiconPronunciation, LexiconProvenance
++from .base import normalize_phoneme_encoding
++from .g2lex import G2LexLookup
++
++
++class LexphonLookup:
++    """Lookup explicitly provisioned Lexphon assets without installing data."""
++
++    def __init__(
++        self,
++        language: str,
++        identifiers: Sequence[str],
++        *,
++        store: Any = None,
++    ) -> None:
++        self.language = language
++        self.identifiers = tuple(identifiers)
++        self.store = store
++        self._lookup: G2LexLookup | None = None
++        self._paths: tuple[Path, ...] = ()
++        self._provenance: tuple[LexiconProvenance, ...] = ()
++        self._closed = False
++        if not self.identifiers:
++            raise LexiconResourceError("At least one Lexphon identifier is required.")
++
++    @staticmethod
++    def _validate_metadata(
++        identifier: str,
++        language: str,
++        metadata: dict[str, Any],
++        asset_path: Path,
++    ) -> LexiconProvenance:
++        kind = metadata.get("kind")
++        if str(kind).casefold() != "pronunciation":
++            raise LexiconResourceError(
++                f"Lexphon asset {identifier!r} has unsupported kind {kind!r}."
++            )
++        declared_language = metadata.get("language") or metadata.get("locale")
++        if not declared_language:
++            raise LexiconResourceError(f"Lexphon asset {identifier!r} has no language metadata.")
++        expected = language.casefold().replace("_", "-")
++        declared = str(declared_language).casefold().replace("_", "-")
++        if not declared.startswith(expected):
++            raise LexiconResourceError(
++                f"Lexphon asset {identifier!r} declares language {declared_language!r}, "
++                f"not requested {language!r}"
++            )
++        raw_encoding = metadata.get("phoneme_encoding") or metadata.get("pronunciation_alphabet")
++        try:
++            source_encoding = normalize_phoneme_encoding(raw_encoding)
++        except ValueError as exc:
++            raise LexiconResourceError(
++                f"Lexphon asset {identifier!r} uses unsupported pronunciation encoding "
++                f"{raw_encoding!r}."
++            ) from exc
++        data_version = metadata.get("data_version") or metadata.get("version")
++        return LexiconProvenance(
++            lexicon_id=identifier,
++            language=str(declared_language),
++            source_encoding=source_encoding,
++            data_version=str(data_version) if data_version is not None else None,
++            asset_path=str(asset_path),
++        )
++
++    def _ensure_lookup(self) -> G2LexLookup:
++        if self._closed:
++            raise LexiconResourceError("Lexphon lookup adapter is closed.")
++        if self._lookup is not None:
++            return self._lookup
++        try:
++            import lexphon
++        except ImportError as exc:
++            raise LexiconDependencyError(
++                'Lexphon support requires the optional extra. Install "inflectg2p[lexphon]".'
++            ) from exc
++
++        try:
++            store = self.store if self.store is not None else lexphon.DataStore()
++            paths: list[Path] = []
++            provenance: list[LexiconProvenance] = []
++            for identifier in self.identifiers:
++                metadata = store.metadata(identifier)
++                if not isinstance(metadata, dict):
++                    raise LexiconResourceError(
++                        f"Lexphon metadata for {identifier!r} is not an object."
++                    )
++                asset_path = Path(store.path(identifier))
++                if not asset_path.is_file():
++                    raise LexiconResourceError(f"Lexphon asset file does not exist: {asset_path}")
++                paths.append(asset_path)
++                provenance.append(
++                    self._validate_metadata(identifier, self.language, metadata, asset_path)
++                )
++            lookup = G2LexLookup(paths, language=self.language)
++        except LexiconResourceError:
++            raise
++        except Exception as exc:
++            identifiers = ", ".join(self.identifiers)
++            raise LexiconResourceError(
++                f"Could not resolve installed Lexphon lexicon(s): {identifiers}."
++            ) from exc
++        self._paths = tuple(paths)
++        self._provenance = tuple(provenance)
++        self._lookup = lookup
++        return lookup
++
++    def lookup(self, word: str, *, tag: str | None = None) -> LexiconPronunciation | None:
++        lookup = self._ensure_lookup()
++        try:
++            result = lookup.lookup(word, tag=tag)
++        except LexiconResourceError:
++            raise
++        except Exception as exc:
++            raise LexiconResourceError(f"Lexphon lookup failed for {word!r}.") from exc
++        if result is None:
++            return None
++        index = next(
++            (i for i, path in enumerate(self._paths) if result.source == f"g2lex:{path}"),
++            None,
++        )
++        if index is None:
++            raise LexiconResourceError("Lexphon lookup returned unknown asset provenance.")
++        provenance = self._provenance[index]
++        return LexiconPronunciation(
++            pronunciation=result.pronunciation,
++            source=f"lexphon:{self.identifiers[index]}",
++            lexicon_id=self.identifiers[index],
++            matched_key=result.matched_key or word,
++            source_encoding=provenance.source_encoding,
++            provenance=provenance,
++        )
++
++    def lookup_many(
++        self,
++        words: Sequence[str],
++        *,
++        tag: str | None = None,
++    ) -> tuple[LexiconPronunciation | None, ...]:
++        return tuple(self.lookup(word, tag=tag) for word in words)
++
++    def close(self) -> None:
++        if not self._closed and self._lookup is not None:
++            self._lookup.close()
++        self._closed = True
++
++    def __enter__(self) -> LexphonLookup:
++        return self
++
++    def __exit__(self, *_: object) -> None:
++        self.close()
+diff --git a/inflectg2p/lexicons/overlay.py b/inflectg2p/lexicons/overlay.py
+new file mode 100644
+index 0000000..b06b20b
+--- /dev/null
++++ b/inflectg2p/lexicons/overlay.py
+@@ -0,0 +1,94 @@
++from __future__ import annotations
++
++from collections.abc import Callable
++
++from ..errors import LexiconError, LexiconMissError, LexiconResourceError
++from ..types import LexiconHit, LexiconPronunciation
++from .base import PronunciationLookup, normalize_phoneme_encoding
++from .spans import scan_source_spans
++
++
++def apply_lexicon_overlay(
++    text: str,
++    lookup: PronunciationLookup,
++    phonemize_text: Callable[[str], str],
++    *,
++    tag: str | None = None,
++    fallback: bool = True,
++) -> tuple[str, tuple[LexiconHit, ...]]:
++    spans = scan_source_spans(text)
++    words = tuple(span.text for span in spans if span.kind == "word")
++    if not words:
++        return text, ()
++    try:
++        matches = lookup.lookup_many(words, tag=tag)
++    except LexiconError:
++        raise
++    except Exception as exc:
++        raise LexiconResourceError("Pronunciation lookup failed.") from exc
++    if len(matches) != len(words):
++        raise LexiconResourceError("Pronunciation lookup returned an invalid batch length.")
++
++    output: list[str] = []
++    pending: list[str] = []
++    pending_has_miss = False
++    word_index = 0
++    lexicon_hits: list[LexiconHit] = []
++
++    def flush_pending() -> None:
++        nonlocal pending_has_miss
++        if not pending:
++            return
++        source_text = "".join(pending)
++        output.append(phonemize_text(source_text) if pending_has_miss else source_text)
++        pending.clear()
++        pending_has_miss = False
++
++    for span in spans:
++        if span.kind == "other":
++            pending.append(span.text)
++            continue
++
++        pronunciation = matches[word_index]
++        word_index += 1
++        if pronunciation is None:
++            if not fallback:
++                raise LexiconMissError(
++                    f"No pronunciation for {span.text!r} in configured lexicons."
++                )
++            pending.append(span.text)
++            pending_has_miss = True
++            continue
++        if not isinstance(pronunciation, LexiconPronunciation):
++            raise LexiconResourceError("Pronunciation lookup returned an invalid value.")
++        if not pronunciation.pronunciation:
++            raise LexiconResourceError(f"Lexicon pronunciation for {span.text!r} is empty.")
++        try:
++            encoding = normalize_phoneme_encoding(pronunciation.source_encoding)
++            if pronunciation.provenance is not None:
++                provenance_encoding = normalize_phoneme_encoding(
++                    pronunciation.provenance.source_encoding
++                )
++                if encoding != provenance_encoding:
++                    raise ValueError("pronunciation and provenance encodings disagree")
++        except ValueError as exc:
++            raise LexiconResourceError(
++                f"Unsupported or inconsistent pronunciation encoding for {span.text!r}."
++            ) from exc
++
++        flush_pending()
++        output.append(pronunciation.pronunciation)
++        lexicon_hits.append(
++            LexiconHit(
++                word=span.text,
++                pronunciation=pronunciation.pronunciation,
++                source=pronunciation.source,
++                lexicon_id=pronunciation.lexicon_id,
++                matched_key=pronunciation.matched_key or span.text,
++                source_encoding=encoding,
++                provenance=pronunciation.provenance,
++            )
++        )
++
++    flush_pending()
++    return "".join(output), tuple(lexicon_hits)
+diff --git a/inflectg2p/lexicons/registry.py b/inflectg2p/lexicons/registry.py
+new file mode 100644
+index 0000000..26a7193
+--- /dev/null
++++ b/inflectg2p/lexicons/registry.py
+@@ -0,0 +1,166 @@
++from __future__ import annotations
++
++from collections.abc import Sequence
++from pathlib import Path
++from types import MappingProxyType
++from typing import Any
++
++from ..errors import LexiconDependencyError, LexiconResourceError
++from ..types import LexiconPronunciation
++from .base import PronunciationLookup, normalize_phoneme_encoding
++from .g2lex import G2LexLookup
++from .lexphon import LexphonLookup
++
++
++def _store(store: Any = None) -> Any:
++    if store is not None:
++        return store
++    try:
++        import lexphon
++    except ImportError as exc:
++        raise LexiconDependencyError(
++            'Lexicon discovery requires the optional extra. Install "inflectg2p[lexphon]".'
++        ) from exc
++    return lexphon.DataStore()
++
++
++def _metadata_items(store: Any) -> list[dict[str, Any]]:
++    try:
++        values = store.installed()
++    except Exception as exc:
++        raise LexiconResourceError("Could not inspect installed Lexphon assets.") from exc
++    if not isinstance(values, Sequence):
++        raise LexiconResourceError("Lexphon installed-asset metadata is invalid.")
++    return [dict(value) for value in values if isinstance(value, dict)]
++
++
++def _matches_language(metadata: dict[str, Any], language: str) -> bool:
++    declared = metadata.get("language") or metadata.get("locale")
++    if declared is None:
++        return False
++    return (
++        str(declared).casefold().replace("_", "-").startswith(language.casefold().replace("_", "-"))
++    )
++
++
++def _is_pronunciation(metadata: dict[str, Any]) -> bool:
++    return str(metadata.get("kind", "")).casefold() == "pronunciation"
++
++
++def _short_name(metadata: dict[str, Any]) -> str:
++    identifier = str(metadata.get("id", metadata.get("lexicon_id", "")))
++    return identifier.rsplit(":", 1)[-1]
++
++
++def available_lexicons(language: str, *, store: Any = None) -> tuple[str, ...]:
++    """Return installed pronunciation asset names for a language."""
++    values = {
++        _short_name(metadata)
++        for metadata in _metadata_items(_store(store))
++        if _is_pronunciation(metadata) and _matches_language(metadata, language)
++    }
++    return tuple(sorted(values))
++
++
++def lexicon_info(language: str, name: str, *, store: Any = None) -> Any:
++    """Return read-only metadata for an installed pronunciation asset."""
++    data_store = _store(store)
++    candidates = [
++        metadata
++        for metadata in _metadata_items(data_store)
++        if _is_pronunciation(metadata)
++        and _matches_language(metadata, language)
++        and (
++            str(metadata.get("id", metadata.get("lexicon_id", ""))) == name
++            or _short_name(metadata) == name
++        )
++    ]
++    if not candidates:
++        raise LexiconResourceError(f"Lexicon {name!r} is not installed for {language!r}.")
++    metadata = candidates[0]
++    identifier = str(metadata.get("id", metadata.get("lexicon_id", name)))
++    try:
++        asset_path = str(data_store.path(identifier))
++    except Exception as exc:
++        raise LexiconResourceError(f"Could not resolve installed lexicon {identifier!r}.") from exc
++    try:
++        encoding = normalize_phoneme_encoding(
++            metadata.get("phoneme_encoding") or metadata.get("pronunciation_alphabet")
++        )
++    except ValueError as exc:
++        raise LexiconResourceError(
++            f"Lexicon {identifier!r} has an unsupported pronunciation encoding."
++        ) from exc
++    info = {
++        "id": identifier,
++        "language": metadata.get("language", metadata.get("locale", language)),
++        "kind": metadata["kind"],
++        "phoneme_encoding": encoding,
++        "data_version": metadata.get("data_version", metadata.get("version")),
++        "asset_path": asset_path,
++    }
++    return MappingProxyType(info)
++
++
++class OrderedLexiconLookup:
++    """Search configured lookups in order and retain the first hit."""
++
++    def __init__(self, lookups: Sequence[PronunciationLookup]) -> None:
++        self._lookups = tuple(lookups)
++        self._closed = False
++
++    def lookup(self, word: str, *, tag: str | None = None) -> LexiconPronunciation | None:
++        return self.lookup_many((word,), tag=tag)[0]
++
++    def lookup_many(
++        self,
++        words: Sequence[str],
++        *,
++        tag: str | None = None,
++    ) -> tuple[LexiconPronunciation | None, ...]:
++        if self._closed:
++            raise LexiconResourceError("Configured lexicon lookup is closed.")
++        results: list[LexiconPronunciation | None] = [None] * len(words)
++        unresolved = list(range(len(words)))
++        for lookup in self._lookups:
++            if not unresolved:
++                break
++            batch = lookup.lookup_many(tuple(words[index] for index in unresolved), tag=tag)
++            if len(batch) != len(unresolved):
++                raise LexiconResourceError("Configured lexicon returned an invalid batch length.")
++            remaining: list[int] = []
++            for index, pronunciation in zip(unresolved, batch, strict=True):
++                if pronunciation is None:
++                    remaining.append(index)
++                else:
++                    results[index] = pronunciation
++            unresolved = remaining
++        return tuple(results)
++
++    def close(self) -> None:
++        if self._closed:
++            return
++        self._closed = True
++        for lookup in self._lookups:
++            lookup.close()
++
++
++def create_lookup(
++    lexicons: str | Sequence[str] | None,
++    *,
++    language: str,
++    store: Any = None,
++) -> PronunciationLookup | None:
++    if lexicons is None:
++        return None
++    names = (lexicons,) if isinstance(lexicons, str) else tuple(lexicons)
++    if not names:
++        return None
++    lookups: list[PronunciationLookup] = []
++    for name in names:
++        path = Path(name)
++        if path.suffix.casefold() == ".g2lex":
++            lookups.append(G2LexLookup((path,), language=language))
++        else:
++            lookups.append(LexphonLookup(language, (name,), store=store))
++    return OrderedLexiconLookup(lookups)
+diff --git a/inflectg2p/lexicons/spans.py b/inflectg2p/lexicons/spans.py
+new file mode 100644
+index 0000000..ef48f44
+--- /dev/null
++++ b/inflectg2p/lexicons/spans.py
+@@ -0,0 +1,64 @@
++from __future__ import annotations
++
++import unicodedata
++from dataclasses import dataclass
++from typing import Literal
++
++
++@dataclass(frozen=True, slots=True)
++class SourceSpan:
++    text: str
++    start: int
++    end: int
++    kind: Literal["word", "other"]
++
++
++_APOSTROPHES = frozenset(("'", "’", "ʼ", "＇"))
++_HYPHENS = frozenset(("-", "‐", "‑", "‒", "–", "—", "−"))
++
++
++def _is_word_character(value: str) -> bool:
++    return bool(value) and unicodedata.category(value)[0] in {"L", "N"}
++
++
++def _is_combining(value: str) -> bool:
++    return bool(value) and unicodedata.category(value).startswith("M")
++
++
++def _word_end(text: str, start: int) -> int:
++    position = start
++    while position < len(text):
++        character = text[position]
++        if _is_word_character(character) or _is_combining(character):
++            position += 1
++        elif character in _APOSTROPHES | _HYPHENS:
++            next_position = position + 1
++            if next_position < len(text) and _is_word_character(text[next_position]):
++                position += 1
++            else:
++                break
++        else:
++            break
++    return position
++
++
++def scan_source_spans(text: str) -> tuple[SourceSpan, ...]:
++    """Scan words while retaining every punctuation and whitespace span."""
++    spans: list[SourceSpan] = []
++    position = 0
++    while position < len(text):
++        if _is_word_character(text[position]):
++            end = _word_end(text, position)
++            spans.append(SourceSpan(text[position:end], position, end, "word"))
++            position = end
++            continue
++        start = position
++        position += 1
++        while position < len(text) and not _is_word_character(text[position]):
++            position += 1
++        spans.append(SourceSpan(text[start:position], start, position, "other"))
++    return tuple(spans)
++
++
++def word_spans(text: str) -> tuple[SourceSpan, ...]:
++    return tuple(span for span in scan_source_spans(text) if span.kind == "word")
+diff --git a/inflectg2p/types.py b/inflectg2p/types.py
+index 70438a5..a64f707 100644
+--- a/inflectg2p/types.py
++++ b/inflectg2p/types.py
+@@ -4,11 +4,41 @@ from dataclasses import dataclass
+
+
+ @dataclass(frozen=True, slots=True)
+-class FrontendResult:
+-    raw_text: str
+-    normalized_text: str
+-    phoneme_text: str
++class LexiconProvenance:
++    lexicon_id: str | None = None
++    language: str | None = None
++    source_encoding: str = "ipa"
++    data_version: str | None = None
++    asset_path: str | None = None
++
++
++@dataclass(frozen=True, slots=True)
++class LexiconPronunciation:
++    pronunciation: str
++    source: str
++    lexicon_id: str | None = None
++    matched_key: str | None = None
++    source_encoding: str = "ipa"
++    provenance: LexiconProvenance | None = None
++
++
++@dataclass(frozen=True, slots=True)
++class LexiconHit:
++    word: str
++    pronunciation: str
++    source: str
++    lexicon_id: str | None = None
++    matched_key: str | None = None
++    source_encoding: str = "ipa"
++    provenance: LexiconProvenance | None = None
++
++
++@dataclass(frozen=True, slots=True)
++class PhonemizeResult:
++    text: str
++    phonemes: str
+     token_ids: tuple[int, ...]
++    lexicon_hits: tuple[LexiconHit, ...] = ()
+
+     @property
+     def token_count(self) -> int:
+diff --git a/pyproject.toml b/pyproject.toml
+index 2087762..09230c1 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -9,20 +9,17 @@ build-backend = "setuptools.build_meta"
+ [project]
+ name = "inflectg2p"
+ dynamic = ["version"]
+-description = "Independent Inflect v2 English normalization, phonemization, and token-ID frontend"
++description = "Inflect v2 phoneme and token-ID frontend for prepared English text"
+ readme = "README.md"
+ requires-python = ">=3.10"
+-license = {text = "Apache-2.0"}
++license = "Apache-2.0"
+ authors = [{name = "inflectg2p contributors"}]
+-keywords = ["tts", "inflect", "g2p", "phonemizer", "espeak", "onnx"]
++keywords = ["tts", "inflect", "g2p", "phoneme", "espeak"]
+ dependencies = [
+-  "phonemizer>=3.3,<4",
+-  "espeakng-loader>=0.2.4,<0.3",
+-  "num2words>=0.5.14,<0.6",
++  "espeakng-runtime>=0.1.5,<0.2",
+ ]
+ classifiers = [
+   "Development Status :: 3 - Alpha",
+-  "License :: OSI Approved :: Apache Software License",
+   "Programming Language :: Python :: 3",
+   "Programming Language :: Python :: 3.10",
+   "Programming Language :: Python :: 3.11",
+@@ -32,13 +29,32 @@ classifiers = [
+ ]
+
+ [project.optional-dependencies]
++bundled = [
++  "espeakng-runtime[bundled]>=0.1.5,<0.2",
++]
++g2lex = [
++  "g2lex>=0.1.8,<0.2",
++]
++lexphon = [
++  "lexphon>=0.2.4,<0.3",
++]
++lexicons = [
++  "lexphon>=0.2.4,<0.3",
++]
++docs = [
++  "sphinx>=8",
++  "myst-parser>=4",
++  "sphinx-rtd-theme>=3",
++]
+ dev = [
+   "pytest>=8",
++  "pytest-cov>=5",
+   "ruff>=0.16,<0.17",
+   "mypy>=1.11",
+   "build>=1",
+   "twine>=5",
+   "packaging>=24",
++  "tomli>=2; python_version < '3.11'",
+ ]
+
+ [project.urls]
+@@ -62,6 +78,10 @@ fallback_version = "0.1.dev0"
+ testpaths = ["tests"]
+ pythonpath = ["."]
+ addopts = "-q"
++markers = [
++  "espeak: requires an available eSpeak backend",
++  "integration: exercises the configured speech runtime",
++]
+
+ [tool.ruff]
+ target-version = "py310"
+@@ -71,7 +91,7 @@ line-length = 100
+ select = ["E", "F", "I", "UP", "B"]
+
+ [tool.mypy]
+-python_version = "3.13"
++python_version = "3.10"
+ packages = ["inflectg2p"]
+ check_untyped_defs = true
+ disallow_untyped_defs = true
+diff --git a/tests/goldens/inflect_v2_en_us.json b/tests/goldens/inflect_v2_en_us.json
+new file mode 100644
+index 0000000..41aaabb
+--- /dev/null
++++ b/tests/goldens/inflect_v2_en_us.json
+@@ -0,0 +1,80 @@
++{
++  "metadata": {
++    "voice": "en-us",
++    "source": "Captured from espeakng-runtime auto mode; phoneme and token snapshots are stable frontend compatibility fixtures, not a promise of identical eSpeak output across runtime versions."
++  },
++  "cases": [
++    {
++      "text": "Hello, world.",
++      "phonemes": "həlˈoʊ, wˈɜːld.",
++      "token_ids": [
++        0, 50, 0, 83, 0, 54, 0, 156, 0, 57, 0, 135, 0, 3, 0, 16, 0, 65, 0, 156,
++        0, 87, 0, 158, 0, 54, 0, 46, 0, 4, 0
++      ]
++    },
++    {
++      "text": "Doesn't the well-known café work?",
++      "phonemes": "dˈʌzənt ðˈə wˈɛlnˈoʊn kæfˈeɪ wˈɜːk?",
++      "token_ids": [
++        0, 46, 0, 156, 0, 138, 0, 68, 0, 83, 0, 56, 0, 62, 0, 16, 0, 81, 0, 156,
++        0, 83, 0, 16, 0, 65, 0, 156, 0, 86, 0, 54, 0, 56, 0, 156, 0, 57, 0, 135,
++        0, 56, 0, 16, 0, 53, 0, 72, 0, 48, 0, 156, 0, 47, 0, 102, 0, 16, 0, 65,
++        0, 156, 0, 87, 0, 158, 0, 53, 0, 6, 0
++      ]
++    },
++    {
++      "text": "“Hello,” she said.",
++      "phonemes": "“həlˈoʊ,” ʃˈiː sˈɛd.",
++      "token_ids": [
++        0, 14, 0, 50, 0, 83, 0, 54, 0, 156, 0, 57, 0, 135, 0, 3, 0, 15, 0, 16,
++        0, 131, 0, 156, 0, 51, 0, 158, 0, 16, 0, 61, 0, 156, 0, 86, 0, 46, 0, 4,
++        0
++      ]
++    },
++    {
++      "text": "Hi—there…",
++      "phonemes": "hˈaɪ—ðˈɛɹ…",
++      "token_ids": [
++        0, 50, 0, 156, 0, 43, 0, 102, 0, 9, 0, 81, 0, 156, 0, 86, 0, 123, 0, 10,
++        0
++      ]
++    },
++    {
++      "text": "  Hello?  ",
++      "phonemes": "  həlˈoʊ?  ",
++      "token_ids": [
++        0, 16, 0, 16, 0, 50, 0, 83, 0, 54, 0, 156, 0, 57, 0, 135, 0, 6, 0, 16,
++        0, 16, 0
++      ]
++    },
++    {
++      "text": "Saskatchewan.",
++      "phonemes": "sˈæskɐtʃˌuːən.",
++      "token_ids": [
++        0, 61, 0, 156, 0, 72, 0, 61, 0, 53, 0, 70, 0, 62, 0, 131, 0, 157, 0, 63,
++        0, 158, 0, 83, 0, 56, 0, 4, 0
++      ]
++    },
++    {
++      "text": "One; two: three!",
++      "phonemes": "wˈʌn; tˈuː: θɹˈiː!",
++      "token_ids": [
++        0, 65, 0, 156, 0, 138, 0, 56, 0, 1, 0, 16, 0, 62, 0, 156, 0, 63, 0, 158,
++        0, 2, 0, 16, 0, 119, 0, 123, 0, 156, 0, 51, 0, 158, 0, 5, 0
++      ]
++    },
++    {
++      "text": "First. Second?",
++      "phonemes": "fˈɜːst. sˈɛkənd?",
++      "token_ids": [
++        0, 48, 0, 156, 0, 87, 0, 158, 0, 61, 0, 62, 0, 4, 0, 16, 0, 61, 0, 156,
++        0, 86, 0, 53, 0, 83, 0, 56, 0, 46, 0, 6, 0
++      ]
++    },
++    {
++      "text": "café.",
++      "phonemes": "kæfˈeɪ.",
++      "token_ids": [0, 53, 0, 72, 0, 48, 0, 156, 0, 47, 0, 102, 0, 4, 0]
++    }
++  ]
++}
+diff --git a/tests/test_api.py b/tests/test_api.py
+new file mode 100644
+index 0000000..24aff7e
+--- /dev/null
++++ b/tests/test_api.py
+@@ -0,0 +1,102 @@
++import pytest
++
++from inflectg2p import (
++    BackendError,
++    InflectG2P,
++    PhonemizationError,
++    PhonemizeResult,
++    phoneme_ids,
++    phonemes,
++    phonemize_prepared,
++)
++
++
++class CapturingBackend:
++    def __init__(self, phonemes: str = "ab") -> None:
++        self.phonemes = phonemes
++        self.seen: list[str] = []
++        self.close_count = 0
++
++    def phonemize(self, text: str, *, voice: str) -> str:
++        assert voice == "en-us"
++        self.seen.append(text)
++        return self.phonemes
++
++    def phonemize_many(self, texts: list[str], *, voice: str) -> list[str]:
++        assert voice == "en-us"
++        self.seen.extend(texts)
++        return [self.phonemes for _ in texts]
++
++    def close(self) -> None:
++        self.close_count += 1
++
++
++def test_prepared_text_reaches_injected_backend_unchanged():
++    text = "Pay $12.50 at 9:05 AM."
++    backend = CapturingBackend()
++    result = InflectG2P(backend=backend).phonemize_prepared(text)
++
++    assert backend.seen == [text]
++    assert isinstance(result, PhonemizeResult)
++    assert result.text == text
++    assert result.phonemes == "ab"
++    assert result.token_count == len(result.token_ids)
++    assert not hasattr(result, "normalized_text")
++
++
++def test_prepared_text_batch_preserves_values_and_order():
++    texts = ["Room 12", "A+B", "3/4"]
++    backend = CapturingBackend()
++    results = InflectG2P(backend=backend).phonemize_prepared_batch(texts)
++
++    assert backend.seen == texts
++    assert [result.text for result in results] == texts
++    assert [result.phonemes for result in results] == ["ab"] * len(texts)
++
++
++def test_context_manager_does_not_close_injected_backend():
++    backend = CapturingBackend()
++    with InflectG2P(backend=backend) as g2p:
++        g2p.phonemize_prepared("hello")
++
++    assert backend.close_count == 0
++
++
++def test_closed_frontend_rejects_further_calls_without_closing_injected_backend():
++    backend = CapturingBackend()
++    g2p = InflectG2P(backend=backend)
++    g2p.close()
++    g2p.close()
++
++    with pytest.raises(BackendError, match="closed"):
++        g2p.phonemize_prepared("hello")
++    assert backend.close_count == 0
++
++
++def test_injected_backend_exceptions_become_package_errors():
++    class FailingBackend:
++        def phonemize(self, text: str, *, voice: str) -> str:
++            raise RuntimeError("backend failed")
++
++        def phonemize_many(self, texts: list[str], *, voice: str) -> list[str]:
++            raise RuntimeError("backend failed")
++
++        def close(self) -> None:
++            pass
++
++    with pytest.raises(PhonemizationError, match="backend failed"):
++        InflectG2P(backend=FailingBackend()).phonemize_prepared("hello")
++
++
++def test_functional_api_helpers_share_the_prepared_text_contract():
++    text = "  Values stay prepared: $12.50, not expanded.  "
++    backend = CapturingBackend()
++
++    result = phonemize_prepared(text, backend=backend)
++    phoneme_text = phonemes(text, backend=backend)
++    token_ids = phoneme_ids(text, backend=backend)
++
++    assert result.text == text
++    assert result.phonemes == phoneme_text == "ab"
++    assert result.token_ids == token_ids
++    assert backend.seen == [text, text, text]
+diff --git a/tests/test_backend.py b/tests/test_backend.py
+new file mode 100644
+index 0000000..b6e0e2a
+--- /dev/null
++++ b/tests/test_backend.py
+@@ -0,0 +1,138 @@
++import pytest
++from espeakng_runtime.errors import EspeakError
++from espeakng_runtime.errors import PhonemizationError as EspeakPhonemizationError
++
++from inflectg2p import (
++    SYMBOLS,
++    BackendUnavailableError,
++    InflectG2PConfig,
++    PhonemizationError,
++)
++from inflectg2p.backends import EspeakBackend
++
++
++class FakeRuntime:
++    def __init__(self, **kwargs):
++        self.arguments = kwargs
++        self.info = object()
++        self.calls: list[tuple[list[str], str]] = []
++        self.close_count = 0
++        self.fail: Exception | None = None
++
++    def phonemize_many(self, texts, *, voice):
++        self.calls.append((list(texts), voice))
++        if self.fail is not None:
++            raise self.fail
++        return ["ab" for _ in texts]
++
++    def close(self):
++        self.close_count += 1
++
++
++def test_config_defaults_and_validation():
++    assert InflectG2PConfig().voice == "en-us"
++    assert InflectG2PConfig().espeak_mode == "auto"
++    for mode in ("native", "cli", "auto"):
++        assert InflectG2PConfig(espeak_mode=mode).espeak_mode == mode
++    with pytest.raises(ValueError, match="espeak_mode"):
++        InflectG2PConfig(espeak_mode="invalid")
++    with pytest.raises(ValueError, match="voice"):
++        InflectG2PConfig(voice=" ")
++    with pytest.raises(ValueError, match="timeout"):
++        InflectG2PConfig(timeout=0)
++
++
++def test_espeak_backend_forwards_runtime_configuration(monkeypatch):
++    runtime = FakeRuntime()
++    calls = []
++
++    def runtime_factory(**kwargs):
++        calls.append(kwargs)
++        return runtime
++
++    monkeypatch.setattr("inflectg2p.backends.espeak.EspeakRuntime", runtime_factory)
++    config = InflectG2PConfig(
++        espeak_mode="cli",
++        executable="/opt/espeak",
++        library="/opt/libespeak.so",
++        data="/opt/espeak-data",
++        timeout=3.5,
++    )
++    backend = EspeakBackend(config)
++
++    assert calls == [
++        {
++            "mode": "cli",
++            "executable": "/opt/espeak",
++            "library": "/opt/libespeak.so",
++            "data": "/opt/espeak-data",
++            "timeout": 3.5,
++        }
++    ]
++    assert backend.diagnostics is runtime.info
++
++
++def test_punctuation_and_exact_spaces_survive_rendering(monkeypatch):
++    runtime = FakeRuntime()
++    monkeypatch.setattr("inflectg2p.backends.espeak.EspeakRuntime", lambda **_: runtime)
++    backend = EspeakBackend()
++    punctuation = "".join(SYMBOLS[1:16])
++
++    assert backend.phonemize(f"  one,  two! {punctuation}", voice="en-us") == (
++        f"  ab,  ab! {punctuation}"
++    )
++    assert runtime.calls == [(["one", "two"], "en-us")]
++
++
++def test_punctuation_only_and_empty_text_need_no_runtime_call(monkeypatch):
++    runtime = FakeRuntime()
++    monkeypatch.setattr("inflectg2p.backends.espeak.EspeakRuntime", lambda **_: runtime)
++    backend = EspeakBackend()
++    punctuation = "".join(SYMBOLS[1:16])
++
++    assert backend.phonemize(punctuation, voice="en-us") == punctuation
++    assert backend.phonemize("", voice="en-us") == ""
++    assert runtime.calls == []
++
++
++def test_scalar_and_batch_rendering_are_equal(monkeypatch):
++    runtime = FakeRuntime()
++    monkeypatch.setattr("inflectg2p.backends.espeak.EspeakRuntime", lambda **_: runtime)
++    backend = EspeakBackend()
++    texts = ["hello, world!", "A  B."]
++
++    scalar = [backend.phonemize(text, voice="en-us") for text in texts]
++    batch = backend.phonemize_many(texts, voice="en-us")
++
++    assert scalar == batch == ["ab, ab!", "ab  ab."]
++
++
++def test_runtime_initialization_errors_are_mapped(monkeypatch):
++    def fail(**kwargs):
++        raise EspeakError("unavailable")
++
++    monkeypatch.setattr("inflectg2p.backends.espeak.EspeakRuntime", fail)
++    with pytest.raises(BackendUnavailableError, match="unavailable"):
++        EspeakBackend()
++
++
++def test_runtime_phonemization_errors_are_mapped(monkeypatch):
++    runtime = FakeRuntime()
++    runtime.fail = EspeakPhonemizationError("runtime failure")
++    monkeypatch.setattr("inflectg2p.backends.espeak.EspeakRuntime", lambda **_: runtime)
++    backend = EspeakBackend()
++
++    with pytest.raises(PhonemizationError, match="runtime failure"):
++        backend.phonemize("hello", voice="en-us")
++
++
++def test_default_backend_is_closed_idempotently(monkeypatch):
++    runtime = FakeRuntime()
++    monkeypatch.setattr("inflectg2p.backends.espeak.EspeakRuntime", lambda **_: runtime)
++    from inflectg2p.api import InflectG2P
++
++    g2p = InflectG2P()
++    g2p.close()
++    g2p.close()
++
++    assert runtime.close_count == 1
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+new file mode 100644
+index 0000000..70e65d9
+--- /dev/null
++++ b/tests/test_cli.py
+@@ -0,0 +1,91 @@
++import json
++
++import pytest
++
++import inflectg2p.__main__ as cli
++from inflectg2p import PhonemizationError, PhonemizeResult
++
++
++class FakeG2P:
++    instances = []
++
++    def __init__(self, config, **kwargs):
++        self.config = config
++        self.kwargs = kwargs
++        self.text = None
++        self.__class__.instances.append(self)
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, *_args):
++        return None
++
++    def phonemize_prepared(self, text):
++        self.text = text
++        return PhonemizeResult(text, "ab", (0, 50, 0))
++
++
++def test_cli_emits_json_and_forwards_runtime_and_lexicon_options(monkeypatch, capsys):
++    FakeG2P.instances.clear()
++    monkeypatch.setattr(cli, "InflectG2P", FakeG2P)
++    text = "Pay $12.50 at 9:05 AM."
++
++    status = cli.main(
++        [
++            "--espeak-mode",
++            "cli",
++            "--executable",
++            "/opt/bin/espeak-ng",
++            "--data",
++            "/opt/share/espeak-ng-data",
++            "--timeout",
++            "2.5",
++            "--lexicon",
++            "en-us:company",
++            "--lexicon",
++            "./local.g2lex",
++            "--no-espeak-fallback",
++            text,
++        ]
++    )
++
++    instance = FakeG2P.instances[0]
++    payload = json.loads(capsys.readouterr().out)
++    assert status == 0
++    assert payload == {
++        "text": text,
++        "phonemes": "ab",
++        "token_ids": [0, 50, 0],
++        "token_count": 3,
++    }
++    assert instance.text == text
++    assert instance.config.espeak_mode == "cli"
++    assert instance.config.executable == "/opt/bin/espeak-ng"
++    assert instance.config.data == "/opt/share/espeak-ng-data"
++    assert instance.config.timeout == 2.5
++    assert instance.kwargs["lexicons"] == ["en-us:company", "./local.g2lex"]
++    assert instance.kwargs["use_espeak_fallback"] is False
++
++
++def test_cli_reports_package_errors_without_a_traceback(monkeypatch, capsys):
++    class FailingG2P(FakeG2P):
++        def phonemize_prepared(self, _text):
++            raise PhonemizationError("backend unavailable")
++
++    monkeypatch.setattr(cli, "InflectG2P", FailingG2P)
++
++    status = cli.main(["Hello."])
++
++    captured = capsys.readouterr()
++    assert status == 2
++    assert captured.out == ""
++    assert captured.err == "inflectg2p: backend unavailable\n"
++
++
++def test_cli_rejects_removed_normalization_option(capsys):
++    with pytest.raises(SystemExit) as error:
++        cli.main(["--normalize", "Hello"])
++
++    assert error.value.code == 2
++    assert "unrecognized arguments" in capsys.readouterr().err
+diff --git a/tests/test_codec.py b/tests/test_codec.py
+new file mode 100644
+index 0000000..a1753e1
+--- /dev/null
++++ b/tests/test_codec.py
+@@ -0,0 +1,51 @@
++import hashlib
++
++import pytest
++
++from inflectg2p.codec import encode_phonemes, intersperse_blanks, phoneme_ids
++from inflectg2p.errors import MissingSymbolError
++from inflectg2p.symbols import BLANK_ID, SPACE_ID, SYMBOL_TO_ID, SYMBOLS
++
++
++def test_symbol_inventory_snapshot_and_duplicate_mapping():
++    assert len(SYMBOLS) == 178
++    assert hashlib.sha256("".join(SYMBOLS).encode()).hexdigest() == (
++        "3e81afeec2d0906de3d7acf2214d32fbc066be8218d2edafe355255391ea92f7"
++    )
++    apostrophe_ids = [index for index, symbol in enumerate(SYMBOLS) if symbol == "'"]
++    assert apostrophe_ids == [174, 176]
++    assert SYMBOL_TO_ID["'"] == apostrophe_ids[-1]
++
++
++def test_blank_and_space_ids_are_fixed():
++    assert BLANK_ID == 0
++    assert SPACE_ID == 16
++    assert SYMBOL_TO_ID[" "] == SPACE_ID
++
++
++def test_encode_known_symbols_and_blank_framing():
++    ids = encode_phonemes("ab")
++    assert ids == (SYMBOL_TO_ID["a"], SYMBOL_TO_ID["b"])
++    assert intersperse_blanks(ids) == (BLANK_ID, ids[0], BLANK_ID, ids[1], BLANK_ID)
++    assert len(intersperse_blanks(ids)) == 2 * len(ids) + 1
++
++
++def test_space_is_encoded_as_an_inflect_symbol():
++    assert encode_phonemes("a b") == (
++        SYMBOL_TO_ID["a"],
++        SPACE_ID,
++        SYMBOL_TO_ID["b"],
++    )
++
++
++def test_unsupported_symbol_has_positioned_package_error():
++    with pytest.raises(MissingSymbolError) as error:
++        encode_phonemes("a🙂")
++    assert error.value.symbol == "🙂"
++    assert error.value.position == 1
++
++
++def test_empty_phoneme_stream_policy():
++    assert encode_phonemes("") == ()
++    with pytest.raises(ValueError, match="no speakable tokens"):
++        phoneme_ids("")
+diff --git a/tests/test_dependency_contract.py b/tests/test_dependency_contract.py
+new file mode 100644
+index 0000000..b4f224c
+--- /dev/null
++++ b/tests/test_dependency_contract.py
+@@ -0,0 +1,48 @@
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++try:
++    import tomllib
++except ModuleNotFoundError:
++    import tomli as tomllib
++
++
++def test_public_import_does_not_require_optional_lexicon_packages():
++    script = """
++import builtins
++
++original_import = builtins.__import__
++def reject_optional(name, *args, **kwargs):
++    level = kwargs.get('level', args[3] if len(args) > 3 else 0)
++    if level == 0 and name.split('.', 1)[0] in {'g2lex', 'lexphon'}:
++        raise AssertionError(f'optional package imported during startup: {name}')
++    return original_import(name, *args, **kwargs)
++
++builtins.__import__ = reject_optional
++import inflectg2p
++assert inflectg2p.InflectG2P
++"""
++    subprocess.run(
++        [sys.executable, "-c", script],
++        check=True,
++        capture_output=True,
++        text=True,
++    )
++
++
++def test_core_dependency_metadata_and_optional_lexicon_extras():
++    pyproject_path = Path(__file__).parents[1] / "pyproject.toml"
++    pyproject = tomllib.loads(pyproject_path.read_text())
++    project = pyproject["project"]
++    dependencies = project["dependencies"]
++    names = {
++        re.match(r"[A-Za-z0-9_.-]+", dependency).group().casefold() for dependency in dependencies
++    }
++
++    assert names == {"espeakng-runtime"}
++    extras = project["optional-dependencies"]
++    assert extras["lexicons"] == extras["lexphon"]
++    assert any(dependency.startswith("g2lex") for dependency in extras["g2lex"])
++    assert any(dependency.startswith("lexphon") for dependency in extras["lexphon"])
+diff --git a/tests/test_espeak_integration.py b/tests/test_espeak_integration.py
+new file mode 100644
+index 0000000..76222ae
+--- /dev/null
++++ b/tests/test_espeak_integration.py
+@@ -0,0 +1,37 @@
++import pytest
++
++from inflectg2p import BackendUnavailableError, InflectG2P, InflectG2PConfig
++
++pytestmark = [pytest.mark.espeak, pytest.mark.integration]
++
++
++def frontend_for_mode(mode):
++    try:
++        return InflectG2P(InflectG2PConfig(voice="en-us", espeak_mode=mode))
++    except BackendUnavailableError as exc:
++        pytest.skip(f"eSpeak mode {mode!r} is unavailable: {exc}")
++
++
++@pytest.mark.parametrize("mode", ("auto", "cli", "native"))
++def test_runtime_modes_preserve_inflect_punctuation_and_stress(mode):
++    text = "“Hello,” she said—really…"
++    with frontend_for_mode(mode) as g2p:
++        result = g2p.phonemize_prepared(text)
++
++    assert result.text == text
++    assert result.phonemes.startswith("“")
++    assert ",” " in result.phonemes
++    assert "—" in result.phonemes
++    assert result.phonemes.endswith("…")
++    assert "ˈ" in result.phonemes or "ˌ" in result.phonemes
++    assert result.token_ids
++
++
++@pytest.mark.parametrize("mode", ("auto", "cli", "native"))
++def test_runtime_scalar_and_batch_rendering_agree(mode):
++    texts = ["Hello, world.", "Café, please.", "One; two?"]
++    with frontend_for_mode(mode) as g2p:
++        scalar = [g2p.phonemize_prepared(text).phonemes for text in texts]
++        batch = [result.phonemes for result in g2p.phonemize_prepared_batch(texts)]
++
++    assert scalar == batch
+diff --git a/tests/test_examples.py b/tests/test_examples.py
+new file mode 100644
+index 0000000..cc9707f
+--- /dev/null
++++ b/tests/test_examples.py
+@@ -0,0 +1,27 @@
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).parents[1]
++
++
++@pytest.mark.parametrize(
++    ("example", "arguments"),
++    [
++        ("basic_usage.py", ()),
++        ("backend_modes.py", ("--mode", "auto")),
++        ("result_inspection.py", ()),
++        ("custom_backend.py", ()),
++    ],
++)
++def test_examples_without_lexicon_assets_run(example, arguments):
++    subprocess.run(
++        [sys.executable, str(ROOT / "examples" / example), *arguments],
++        cwd=ROOT,
++        check=True,
++        capture_output=True,
++        text=True,
++        timeout=30,
++    )
+diff --git a/tests/test_goldens.py b/tests/test_goldens.py
+new file mode 100644
+index 0000000..a440263
+--- /dev/null
++++ b/tests/test_goldens.py
+@@ -0,0 +1,34 @@
++import json
++from pathlib import Path
++
++from inflectg2p import InflectG2P
++
++
++class GoldenBackend:
++    def __init__(self, phonemes_by_text):
++        self.phonemes_by_text = phonemes_by_text
++
++    def phonemize(self, text, *, voice):
++        assert voice == "en-us"
++        return self.phonemes_by_text[text]
++
++    def phonemize_many(self, texts, *, voice):
++        assert voice == "en-us"
++        return [self.phonemes_by_text[text] for text in texts]
++
++    def close(self):
++        raise AssertionError("Injected backend is caller-owned.")
++
++
++def test_en_us_golden_phonemes_and_token_ids():
++    path = Path(__file__).parent / "goldens" / "inflect_v2_en_us.json"
++    cases = json.loads(path.read_text(encoding="utf-8"))["cases"]
++    phonemes_by_text = {case["text"]: case["phonemes"] for case in cases}
++    with InflectG2P(backend=GoldenBackend(phonemes_by_text)) as g2p:
++        results = g2p.phonemize_prepared_batch([case["text"] for case in cases])
++
++    assert len(results) == len(cases)
++    for result, case in zip(results, cases, strict=True):
++        assert result.text == case["text"]
++        assert result.phonemes == case["phonemes"]
++        assert list(result.token_ids) == case["token_ids"]
+diff --git a/tests/test_lexicon_adapters.py b/tests/test_lexicon_adapters.py
+new file mode 100644
+index 0000000..5f9d9d8
+--- /dev/null
++++ b/tests/test_lexicon_adapters.py
+@@ -0,0 +1,241 @@
++import builtins
++import sys
++from types import ModuleType
++
++import pytest
++
++from inflectg2p import LexiconDependencyError, LexiconResourceError
++from inflectg2p.lexicons import G2LexLookup, LexiconPronunciation, LexphonLookup
++from inflectg2p.lexicons.registry import available_lexicons, lexicon_info
++
++
++def metadata(**overrides):
++    return {
++        "id": "en-us:fixture",
++        "language": "en-US",
++        "kind": "pronunciation",
++        "phoneme_encoding": "ipa",
++        "data_version": "1",
++        **overrides,
++    }
++
++
++def install_mock_module(monkeypatch, name, **attributes):
++    module = ModuleType(name)
++    for key, value in attributes.items():
++        setattr(module, key, value)
++    monkeypatch.setitem(sys.modules, name, module)
++    return module
++
++
++class FakeAsset:
++    def __init__(self, values, metadata_value=None):
++        self.values = values
++        self.metadata = metadata_value or metadata()
++        self.calls = []
++        self.close_count = 0
++
++    def lookup(self, word, *, tag=None):
++        self.calls.append((word, tag))
++        return self.values.get(word)
++
++    def close(self):
++        self.close_count += 1
++
++
++def test_g2lex_preserves_order_tag_and_asset_provenance(tmp_path, monkeypatch):
++    first_path = tmp_path / "first.g2lex"
++    second_path = tmp_path / "second.g2lex"
++    first_path.touch()
++    second_path.touch()
++    first = FakeAsset({"word": "wɜːd"}, metadata(id="first", data_version="v1"))
++    second = FakeAsset({"word": "second"}, metadata(id="second", data_version="v2"))
++    assets = {first_path: first, second_path: second}
++    install_mock_module(monkeypatch, "g2lex", open=lambda path: assets[path])
++    lookup = G2LexLookup((first_path, second_path), language="en-US")
++
++    result = lookup.lookup("word", tag="noun")
++    lookup.close()
++    lookup.close()
++
++    assert result.pronunciation == "wɜːd"
++    assert result.lexicon_id == "first"
++    assert result.matched_key == "word"
++    assert result.source_encoding == "ipa"
++    assert result.provenance.data_version == "v1"
++    assert first.calls == [("word", "noun")]
++    assert second.calls == []
++    assert first.close_count == second.close_count == 1
++
++
++@pytest.mark.parametrize(
++    ("metadata_overrides", "message"),
++    [
++        ({"language": "de-DE"}, "language"),
++        ({"kind": "grapheme"}, "kind"),
++        ({"phoneme_encoding": "espeak-ipa3"}, "encoding"),
++    ],
++)
++def test_g2lex_rejects_incompatible_asset_metadata(
++    tmp_path,
++    monkeypatch,
++    metadata_overrides,
++    message,
++):
++    path = tmp_path / "invalid.g2lex"
++    path.touch()
++    asset = FakeAsset({}, metadata(**metadata_overrides))
++    install_mock_module(monkeypatch, "g2lex", open=lambda _: asset)
++    lookup = G2LexLookup((path,), language="en-US")
++
++    with pytest.raises(LexiconResourceError, match=message):
++        lookup.lookup("word")
++    assert asset.close_count == 1
++
++
++def test_g2lex_missing_file_has_a_focused_resource_error(tmp_path):
++    lookup = G2LexLookup((tmp_path / "missing.g2lex",), language="en-US")
++    with pytest.raises(LexiconResourceError, match="does not exist"):
++        lookup.lookup("word")
++
++
++def test_missing_g2lex_dependency_has_an_actionable_error(tmp_path, monkeypatch):
++    path = tmp_path / "asset.g2lex"
++    path.touch()
++    monkeypatch.delitem(sys.modules, "g2lex", raising=False)
++    original_import = builtins.__import__
++
++    def import_without_g2lex(name, *args, **kwargs):
++        if name == "g2lex":
++            raise ImportError("not installed")
++        return original_import(name, *args, **kwargs)
++
++    monkeypatch.setattr(builtins, "__import__", import_without_g2lex)
++    with pytest.raises(LexiconDependencyError, match=r"inflectg2p\[g2lex\]"):
++        G2LexLookup((path,)).lookup("word")
++
++
++class FakeStore:
++    def __init__(self, records, paths):
++        self.records = records
++        self.paths = paths
++        self.install_calls = 0
++
++    def metadata(self, identifier):
++        return self.records[identifier]
++
++    def path(self, identifier):
++        return self.paths[identifier]
++
++    def installed(self):
++        return tuple(self.records.values())
++
++    def install(self, _artifact):
++        self.install_calls += 1
++        raise AssertionError("Lookup must never install lexicon assets.")
++
++
++class FakeG2LexLookup:
++    def __init__(self, paths, *, language):
++        self.paths = tuple(paths)
++        self.language = language
++        self.calls = []
++        self.close_count = 0
++
++    def lookup(self, word, *, tag=None):
++        self.calls.append((word, tag))
++        if word != "word":
++            return None
++        return LexiconPronunciation(
++            pronunciation="wɜːd",
++            source=f"g2lex:{self.paths[0]}",
++            matched_key=word,
++        )
++
++    def close(self):
++        self.close_count += 1
++
++
++def test_lexphon_uses_only_installed_store_data_and_forwards_tag(tmp_path, monkeypatch):
++    identifier = "en-us:fixture"
++    path = tmp_path / "fixture.g2lex"
++    path.touch()
++    store = FakeStore({identifier: metadata()}, {identifier: path})
++    inner = FakeG2LexLookup((path,), language="en-US")
++    install_mock_module(monkeypatch, "lexphon")
++    monkeypatch.setattr("inflectg2p.lexicons.lexphon.G2LexLookup", lambda paths, **kwargs: inner)
++    lookup = LexphonLookup("en-US", (identifier,), store=store)
++
++    result = lookup.lookup("word", tag="noun")
++    lookup.close()
++
++    assert result.source == f"lexphon:{identifier}"
++    assert result.lexicon_id == identifier
++    assert result.provenance.asset_path == str(path)
++    assert inner.calls == [("word", "noun")]
++    assert inner.close_count == 1
++    assert store.install_calls == 0
++
++
++@pytest.mark.parametrize(
++    ("metadata_overrides", "message"),
++    [
++        ({"language": "de-DE"}, "language"),
++        ({"kind": "grapheme"}, "kind"),
++        ({"phoneme_encoding": "espeak-ipa3"}, "encoding"),
++    ],
++)
++def test_lexphon_rejects_invalid_catalog_metadata(
++    tmp_path,
++    monkeypatch,
++    metadata_overrides,
++    message,
++):
++    identifier = "en-us:fixture"
++    path = tmp_path / "fixture.g2lex"
++    path.touch()
++    store = FakeStore({identifier: metadata(**metadata_overrides)}, {identifier: path})
++    install_mock_module(monkeypatch, "lexphon")
++    monkeypatch.setattr(
++        "inflectg2p.lexicons.lexphon.G2LexLookup",
++        lambda *_args, **_kwargs: pytest.fail("Invalid metadata must be rejected first."),
++    )
++    lookup = LexphonLookup("en-US", (identifier,), store=store)
++
++    with pytest.raises(LexiconResourceError, match=message):
++        lookup.lookup("word")
++    assert store.install_calls == 0
++
++
++def test_missing_lexphon_dependency_has_an_actionable_error(monkeypatch):
++    monkeypatch.delitem(sys.modules, "lexphon", raising=False)
++    original_import = builtins.__import__
++
++    def import_without_lexphon(name, *args, **kwargs):
++        if name == "lexphon":
++            raise ImportError("not installed")
++        return original_import(name, *args, **kwargs)
++
++    monkeypatch.setattr(builtins, "__import__", import_without_lexphon)
++    with pytest.raises(LexiconDependencyError, match=r"inflectg2p\[lexphon\]"):
++        LexphonLookup("en-US", ("en-us:fixture",)).lookup("word")
++
++
++def test_registry_lists_and_inspects_provisioned_assets_without_installing(tmp_path):
++    identifier = "en-us:lexhint"
++    path = tmp_path / "lexhint.g2lex"
++    path.touch()
++    store = FakeStore(
++        {
++            identifier: metadata(id=identifier),
++            "de-de:fixture": metadata(id="de-de:fixture", language="de-DE"),
++            "en-us:graphemes": metadata(id="en-us:graphemes", kind="grapheme"),
++        },
++        {identifier: path},
++    )
++
++    assert available_lexicons("en-US", store=store) == ("lexhint",)
++    info = lexicon_info("en-US", "lexhint", store=store)
++    assert info["id"] == identifier
++    assert info["asset_path"] == str(path)
++    assert store.install_calls == 0
+diff --git a/tests/test_lexicon_overlay.py b/tests/test_lexicon_overlay.py
+new file mode 100644
+index 0000000..860f72a
+--- /dev/null
++++ b/tests/test_lexicon_overlay.py
+@@ -0,0 +1,225 @@
++import pytest
++
++from inflectg2p import InflectG2P, LexiconMissError, LexiconResourceError, MissingSymbolError
++from inflectg2p.lexicons import (
++    LexiconPronunciation,
++    LexiconProvenance,
++    OrderedLexiconLookup,
++    apply_lexicon_overlay,
++)
++
++
++class MappingLookup:
++    def __init__(self, values):
++        self.values = values
++        self.calls = []
++        self.close_count = 0
++        self.error = None
++
++    def lookup(self, word: str, *, tag: str | None = None):
++        return self.lookup_many((word,), tag=tag)[0]
++
++    def lookup_many(self, words, *, tag: str | None = None):
++        self.calls.append((tuple(words), tag))
++        if self.error is not None:
++            raise self.error
++        return tuple(self.values.get(word) for word in words)
++
++    def close(self):
++        self.close_count += 1
++
++
++def pronunciation(word, value, *, lexicon_id="test", source="mapping", encoding="ipa"):
++    provenance = LexiconProvenance(
++        lexicon_id=lexicon_id,
++        language="en-US",
++        source_encoding=encoding,
++        data_version="1",
++        asset_path="fixture.g2lex",
++    )
++    return LexiconPronunciation(
++        pronunciation=value,
++        source=source,
++        lexicon_id=lexicon_id,
++        matched_key=word,
++        source_encoding=encoding,
++        provenance=provenance,
++    )
++
++
++def test_lexicon_hits_bypass_fallback_and_report_provenance():
++    lookup = MappingLookup(
++        {
++            "Saskatchewan": pronunciation("Saskatchewan", "sɑsk"),
++            "fluorescent": pronunciation("fluorescent", "flʊ"),
++        }
++    )
++    fallback_calls = []
++
++    rendered, hits = apply_lexicon_overlay(
++        "Saskatchewan is fluorescent.",
++        lookup,
++        lambda text: fallback_calls.append(text) or f"[{text}]",
++    )
++
++    assert rendered == "sɑsk[ is ]flʊ."
++    assert fallback_calls == [" is "]
++    assert [hit.word for hit in hits] == ["Saskatchewan", "fluorescent"]
++    assert hits[0].lexicon_id == "test"
++    assert hits[0].matched_key == "Saskatchewan"
++    assert hits[0].provenance == lookup.values["Saskatchewan"].provenance
++
++
++def test_adjacent_hits_do_not_create_empty_fallback_calls():
++    lookup = MappingLookup(
++        {
++            "one": pronunciation("one", "wʌn"),
++            "two": pronunciation("two", "tu"),
++        }
++    )
++    fallback_calls = []
++
++    rendered, hits = apply_lexicon_overlay(
++        "one two",
++        lookup,
++        lambda text: fallback_calls.append(text) or text,
++    )
++
++    assert rendered == "wʌn tu"
++    assert len(hits) == 2
++    assert fallback_calls == []
++
++
++def test_adjacent_misses_are_coalesced_into_one_fallback_call():
++    lookup = MappingLookup({})
++    fallback_calls = []
++
++    rendered, hits = apply_lexicon_overlay(
++        "alpha, beta?",
++        lookup,
++        lambda text: fallback_calls.append(text) or f"[{text}]",
++    )
++
++    assert rendered == "[alpha, beta?]"
++    assert fallback_calls == ["alpha, beta?"]
++    assert hits == ()
++
++
++def test_ordered_lexicons_use_the_first_configured_hit():
++    first = MappingLookup({"one": pronunciation("one", "fɜːst", lexicon_id="first")})
++    second = MappingLookup(
++        {
++            "one": pronunciation("one", "sɛkənd", lexicon_id="second"),
++            "two": pronunciation("two", "tu", lexicon_id="second"),
++        }
++    )
++    lookup = OrderedLexiconLookup((first, second))
++
++    matches = lookup.lookup_many(("one", "two"), tag="noun")
++
++    assert [match.lexicon_id for match in matches if match is not None] == ["first", "second"]
++    assert first.calls == [(("one", "two"), "noun")]
++    assert second.calls == [(("two",), "noun")]
++
++
++def test_fallback_can_be_disabled_with_a_focused_miss_error():
++    lookup = MappingLookup({})
++    fallback_calls = []
++
++    with pytest.raises(LexiconMissError, match="unknown"):
++        apply_lexicon_overlay(
++            "unknown",
++            lookup,
++            lambda text: fallback_calls.append(text) or text,
++            fallback=False,
++        )
++    assert fallback_calls == []
++
++
++def test_resource_errors_are_not_treated_as_misses():
++    lookup = MappingLookup({})
++    lookup.error = LexiconResourceError("invalid asset")
++
++    with pytest.raises(LexiconResourceError, match="invalid asset"):
++        apply_lexicon_overlay("unknown", lookup, lambda text: text)
++
++
++def test_invalid_lookup_batch_is_a_resource_error():
++    class BadLookup(MappingLookup):
++        def lookup_many(self, words, *, tag=None):
++            return ()
++
++    with pytest.raises(LexiconResourceError, match="batch length"):
++        apply_lexicon_overlay("word", BadLookup({}), lambda text: text)
++
++
++def test_unsupported_encoding_is_a_resource_error():
++    lookup = MappingLookup({"word": pronunciation("word", "wɜːd", encoding="espeak-ipa3")})
++
++    with pytest.raises(LexiconResourceError, match="encoding"):
++        apply_lexicon_overlay("word", lookup, lambda text: text)
++
++
++def test_unencodable_ipa_hit_uses_the_inflect_symbol_error():
++    lookup = MappingLookup({"word": pronunciation("word", "@")})
++
++    with InflectG2P(backend=CapturingBackend(), lexicon_backend=lookup) as g2p:
++        with pytest.raises(MissingSymbolError) as error:
++            g2p.phonemize_prepared("word")
++    assert error.value.symbol == "@"
++
++
++class CapturingBackend:
++    def __init__(self):
++        self.seen = []
++
++    def phonemize(self, text: str, *, voice: str) -> str:
++        self.seen.append(text)
++        return "ab"
++
++    def phonemize_many(self, texts, *, voice: str):
++        self.seen.extend(texts)
++        return ["ab" for _ in texts]
++
++    def close(self):
++        raise AssertionError("Injected backend is caller-owned.")
++
++
++def test_frontend_uses_injected_lexicon_and_keeps_it_caller_owned():
++    lexicon = MappingLookup({"word": pronunciation("word", "ab")})
++    backend = CapturingBackend()
++
++    with InflectG2P(backend=backend, lexicon_backend=lexicon) as g2p:
++        result = g2p.phonemize_prepared("word")
++
++    assert result.phonemes == "ab"
++    assert result.lexicon_hits[0].word == "word"
++    assert backend.seen == []
++    assert lexicon.close_count == 0
++
++
++def test_frontend_closes_an_internally_created_lookup(monkeypatch):
++    lexicon = MappingLookup({})
++    monkeypatch.setattr("inflectg2p.api.create_lookup", lambda *_args, **_kwargs: lexicon)
++    g2p = InflectG2P(backend=CapturingBackend(), lexicons=("en-us:fixture",))
++
++    g2p.close()
++    g2p.close()
++
++    assert lexicon.close_count == 1
++
++
++def test_fallback_cannot_be_disabled_without_a_lexicon():
++    with pytest.raises(ValueError, match="requires a lexicon"):
++        InflectG2P(backend=CapturingBackend(), use_espeak_fallback=False)
++
++
++def test_lexicon_only_frontend_does_not_construct_espeak():
++    lookup = MappingLookup({"word": pronunciation("word", "ab")})
++    g2p = InflectG2P(lexicon_backend=lookup, use_espeak_fallback=False)
++
++    result = g2p.phonemize_prepared("word")
++    g2p.close()
++
++    assert result.phonemes == "ab"
++    assert g2p._backend is None
+diff --git a/tests/test_lexicon_spans.py b/tests/test_lexicon_spans.py
+new file mode 100644
+index 0000000..f4f8c80
+--- /dev/null
++++ b/tests/test_lexicon_spans.py
+@@ -0,0 +1,20 @@
++from inflectg2p.lexicons.spans import scan_source_spans, word_spans
++
++
++def test_source_scanner_retains_every_source_character_and_span():
++    text = "  O’Neil's well-known cafe\u0301, 42! "
++    spans = scan_source_spans(text)
++
++    assert "".join(span.text for span in spans) == text
++    assert all(text[span.start : span.end] == span.text for span in spans)
++    assert [span.text for span in word_spans(text)] == [
++        "O’Neil's",
++        "well-known",
++        "cafe\u0301",
++        "42",
++    ]
++
++
++def test_apostrophes_and_hyphens_only_join_internal_word_characters():
++    text = "'start end' end-"
++    assert [span.text for span in word_spans(text)] == ["start", "end", "end"]
+diff --git a/tests/test_normalize_no_numbers.py b/tests/test_normalize_no_numbers.py
+deleted file mode 100644
+index 300cbed..0000000
+--- a/tests/test_normalize_no_numbers.py
++++ /dev/null
+@@ -1,6 +0,0 @@
+-from inflectg2p import normalize_text
+-
+-
+-def test_punctuation_and_abbreviation_normalization_without_optional_runtime_calls():
+-    assert normalize_text("Dr. Smith—hello") == "doctor Smith, hello"
+-    assert normalize_text("USB-C works") == "you ess bee see works"
+diff --git a/tests/test_packaging.py b/tests/test_packaging.py
+new file mode 100644
+index 0000000..fc48a47
+--- /dev/null
++++ b/tests/test_packaging.py
+@@ -0,0 +1,118 @@
++import importlib.util
++import io
++import tarfile
++import zipfile
++from pathlib import Path
++
++import pytest
++
++ROOT = Path(__file__).parents[1]
++SPEC = importlib.util.spec_from_file_location(
++    "check_release_artifacts",
++    ROOT / "tools" / "check_release_artifacts.py",
++)
++assert SPEC is not None and SPEC.loader is not None
++CHECKER = importlib.util.module_from_spec(SPEC)
++SPEC.loader.exec_module(CHECKER)
++check_release_artifacts = CHECKER.check_release_artifacts
++
++
++def write_wheel(dist_dir: Path, version: str, extra_requirements: tuple[str, ...] = ()) -> None:
++    wheel = dist_dir / f"inflectg2p-{version}-py3-none-any.whl"
++    dist_info = f"inflectg2p-{version}.dist-info"
++    requirements = "\n".join(
++        ["Requires-Dist: espeakng-runtime>=0.1.5,<0.2"]
++        + [f"Requires-Dist: {requirement}" for requirement in extra_requirements]
++    )
++    metadata = (
++        "Metadata-Version: 2.4\n"
++        "Name: inflectg2p\n"
++        f"Version: {version}\n"
++        "Requires-Python: >=3.10\n"
++        f"{requirements}\n\n"
++    )
++    with zipfile.ZipFile(wheel, "w") as archive:
++        archive.writestr("inflectg2p/__init__.py", "")
++        archive.writestr("inflectg2p/__main__.py", "")
++        archive.writestr("inflectg2p/py.typed", "")
++        archive.writestr(f"{dist_info}/METADATA", metadata)
++        archive.writestr(f"{dist_info}/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\n")
++        archive.writestr(
++            f"{dist_info}/entry_points.txt",
++            "[console_scripts]\ninflectg2p = inflectg2p.__main__:main\n",
++        )
++
++
++def write_sdist(dist_dir: Path, version: str, *, include_tool: bool = True) -> None:
++    sdist = dist_dir / f"inflectg2p-{version}.tar.gz"
++    root = f"inflectg2p-{version}"
++    files = {
++        "README.md": "# inflectg2p\n",
++        "LICENSE": "license\n",
++        "NOTICE": "notice\n",
++        "pyproject.toml": "[project]\n",
++        "docs/index.md": "# docs\n",
++        "examples/basic_usage.py": "pass\n",
++        "inflectg2p/__init__.py": "",
++        "inflectg2p/py.typed": "",
++        "PKG-INFO": (
++            "Metadata-Version: 2.4\n"
++            "Name: inflectg2p\n"
++            f"Version: {version}\n"
++            "Requires-Python: >=3.10\n\n"
++        ),
++    }
++    if include_tool:
++        files["tools/check_release_artifacts.py"] = "pass\n"
++    with tarfile.open(sdist, "w:gz") as archive:
++        for relative_path, content in files.items():
++            data = content.encode("utf-8")
++            member = tarfile.TarInfo(f"{root}/{relative_path}")
++            member.size = len(data)
++            archive.addfile(member, io.BytesIO(data))
++
++
++def create_dist(
++    dist_dir: Path,
++    version: str = "0.1.0",
++    extra_requirements: tuple[str, ...] = (),
++    *,
++    include_tool: bool = True,
++) -> None:
++    dist_dir.mkdir(parents=True, exist_ok=True)
++    write_wheel(dist_dir, version, extra_requirements)
++    write_sdist(dist_dir, version, include_tool=include_tool)
++
++
++def test_release_artifact_checker_accepts_a_complete_matching_pair(tmp_path):
++    create_dist(tmp_path)
++
++    check_release_artifacts(tmp_path, expected_version="0.1.0")
++
++
++@pytest.mark.parametrize(
++    "dependency",
++    (
++        "phonemizer>=3",
++        "abbr2words>=1; extra == 'dev'",
++    ),
++)
++def test_release_artifact_checker_rejects_removed_dependencies(tmp_path, dependency):
++    create_dist(tmp_path, extra_requirements=(dependency,))
++
++    with pytest.raises(ValueError, match="removed dependencies"):
++        check_release_artifacts(tmp_path)
++
++
++def test_release_artifact_checker_rejects_wrong_tag_version(tmp_path):
++    create_dist(tmp_path, version="0.1.1")
++
++    with pytest.raises(ValueError, match="expected 0.1.0"):
++        check_release_artifacts(tmp_path, expected_version="0.1.0")
++
++
++def test_release_artifact_checker_rejects_incomplete_sdist(tmp_path):
++    create_dist(tmp_path, include_tool=False)
++
++    with pytest.raises(ValueError, match="missing required files"):
++        check_release_artifacts(tmp_path)
+diff --git a/tests/test_semantic_boundary.py b/tests/test_semantic_boundary.py
+new file mode 100644
+index 0000000..f243e57
+--- /dev/null
++++ b/tests/test_semantic_boundary.py
+@@ -0,0 +1,22 @@
++from pathlib import Path
++
++
++def test_core_contains_no_semantic_preparation_or_runtime_setup():
++    package_root = Path(__file__).parents[1] / "inflectg2p"
++    forbidden = (
++        "num2words",
++        "phonemizer",
++        "espeakng_loader",
++        "_configure_espeak",
++        "ABBREVIATIONS",
++        "WORD_OVERRIDES",
++        "PHONEME_OVERRIDES",
++        "PUNCT_TRANSLATION",
++        "normalize_text",
++        "_expand_",
++        "numeralform",
++        "spokenform",
++        "abbr2words",
++    )
++    source = "\n".join(path.read_text() for path in package_root.rglob("*.py"))
++    assert not [name for name in forbidden if name in source]
+diff --git a/tests/test_symbols.py b/tests/test_symbols.py
+index c6442ca..1c04da1 100644
+--- a/tests/test_symbols.py
++++ b/tests/test_symbols.py
+@@ -1,4 +1,4 @@
+-from inflectg2p.frontend import encode_phonemes, intersperse_blanks
++from inflectg2p.codec import encode_phonemes, intersperse_blanks
+ from inflectg2p.symbols import BLANK_ID, SYMBOL_TO_ID
+
+
+diff --git a/tools/check_release_artifacts.py b/tools/check_release_artifacts.py
+new file mode 100644
+index 0000000..43774f7
+--- /dev/null
++++ b/tools/check_release_artifacts.py
+@@ -0,0 +1,217 @@
++from __future__ import annotations
++
++import argparse
++import sys
++import tarfile
++import zipfile
++from email.parser import Parser
++from pathlib import Path, PurePosixPath
++
++from packaging.requirements import Requirement
++from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
++from packaging.version import Version
++
++FORBIDDEN_DEPENDENCIES = {
++    "phonemizer",
++    "espeakng-loader",
++    "num2words",
++    "numeralform",
++    "spokenform",
++    "abbr2words",
++}
++WHEEL_EXCLUDED_PATHS = {
++    ".github",
++    ".ledger",
++    ".venv",
++    "build",
++    "dist",
++    "docs",
++    "examples",
++    "tests",
++    "tools",
++}
++SDIST_EXCLUDED_PATHS = {".github", ".ledger", ".venv", "build", "dist"}
++SDIST_REQUIRED_FILES = {
++    "README.md",
++    "LICENSE",
++    "NOTICE",
++    "pyproject.toml",
++    "docs/index.md",
++    "examples/basic_usage.py",
++    "tools/check_release_artifacts.py",
++    "inflectg2p/__init__.py",
++    "inflectg2p/py.typed",
++}
++
++
++def _require(condition: bool, message: str) -> None:
++    if not condition:
++        raise ValueError(message)
++
++
++def _check_version(actual: Version, expected: str | None, label: str) -> None:
++    if expected is not None:
++        _require(actual == Version(expected), f"{label} version is {actual}, expected {expected}.")
++
++
++def _check_wheel(path: Path, expected_version: str | None) -> Version:
++    name, filename_version, _build, _tags = parse_wheel_filename(path.name)
++    _require(canonicalize_name(name) == "inflectg2p", f"Unexpected wheel distribution: {name}.")
++    _check_version(filename_version, expected_version, "Wheel")
++
++    with zipfile.ZipFile(path) as archive:
++        names = set(archive.namelist())
++        _require("inflectg2p/__init__.py" in names, "Wheel is missing inflectg2p/__init__.py.")
++        _require("inflectg2p/__main__.py" in names, "Wheel is missing inflectg2p/__main__.py.")
++        _require("inflectg2p/py.typed" in names, "Wheel is missing inflectg2p/py.typed.")
++        _require(
++            any(name.startswith("inflectg2p/") and name.endswith(".py") for name in names),
++            "Wheel contains no inflectg2p Python modules.",
++        )
++        for member in names:
++            parts = set(PurePosixPath(member).parts)
++            _require(
++                not parts.intersection(WHEEL_EXCLUDED_PATHS),
++                f"Wheel contains development-only path {member!r}.",
++            )
++
++        metadata_files = [
++            member
++            for member in names
++            if PurePosixPath(member).name == "METADATA"
++            and PurePosixPath(member).parent.name.endswith(".dist-info")
++        ]
++        _require(
++            len(metadata_files) == 1,
++            "Wheel must contain exactly one dist-info/METADATA file.",
++        )
++        metadata = Parser().parsestr(archive.read(metadata_files[0]).decode("utf-8"))
++        _require(
++            canonicalize_name(metadata.get("Name", "")) == "inflectg2p",
++            "Wheel METADATA has an unexpected distribution name.",
++        )
++        metadata_version = Version(metadata.get("Version", "0"))
++        _require(
++            metadata_version == filename_version,
++            "Wheel filename and METADATA versions differ.",
++        )
++        _require(
++            metadata.get("Requires-Python") == ">=3.10",
++            "Wheel Requires-Python must be >=3.10.",
++        )
++
++        requirements = [Requirement(value) for value in metadata.get_all("Requires-Dist", [])]
++        forbidden = {
++            canonicalize_name(str(requirement.name))
++            for requirement in requirements
++            if canonicalize_name(str(requirement.name)) in FORBIDDEN_DEPENDENCIES
++        }
++        _require(
++            not forbidden,
++            f"Wheel metadata contains removed dependencies: {sorted(forbidden)}.",
++        )
++        core_dependencies = {
++            canonicalize_name(str(requirement.name))
++            for requirement in requirements
++            if requirement.marker is None or requirement.marker.evaluate({"extra": ""})
++        }
++        _require(
++            core_dependencies == {"espeakng-runtime"},
++            f"Unexpected core dependencies: {sorted(core_dependencies)}.",
++        )
++
++        entry_point_files = [
++            member
++            for member in names
++            if PurePosixPath(member).name == "entry_points.txt"
++            and PurePosixPath(member).parent.name.endswith(".dist-info")
++        ]
++        _require(len(entry_point_files) == 1, "Wheel must contain one entry_points.txt.")
++        entry_points = archive.read(entry_point_files[0]).decode("utf-8")
++        _require(
++            "inflectg2p = inflectg2p.__main__:main" in entry_points,
++            "Wheel is missing the inflectg2p console script.",
++        )
++    return filename_version
++
++
++def _check_sdist(path: Path, expected_version: str | None) -> Version:
++    name, filename_version = parse_sdist_filename(path.name)
++    _require(canonicalize_name(name) == "inflectg2p", f"Unexpected sdist distribution: {name}.")
++    _check_version(filename_version, expected_version, "Sdist")
++
++    with tarfile.open(path, "r:*") as archive:
++        members = [member for member in archive.getmembers() if member.isfile()]
++        roots = {PurePosixPath(member.name).parts[0] for member in members}
++        expected_root = f"inflectg2p-{filename_version}"
++        _require(roots == {expected_root}, f"Sdist must have one {expected_root!r} root directory.")
++        files: set[str] = set()
++        for member in members:
++            parts = PurePosixPath(member.name).parts
++            _require(
++                not set(parts).intersection(SDIST_EXCLUDED_PATHS),
++                f"Sdist contains a development-only path {member.name!r}.",
++            )
++            _require(
++                "__pycache__" not in parts and ".git" not in parts,
++                f"Sdist contains a local cache or Git metadata path {member.name!r}.",
++            )
++            files.add(PurePosixPath(*parts[1:]).as_posix())
++        missing = SDIST_REQUIRED_FILES.difference(files)
++        pkg_info_members = [
++            member
++            for member in members
++            if PurePosixPath(member.name).relative_to(expected_root) == PurePosixPath("PKG-INFO")
++        ]
++        _require(len(pkg_info_members) == 1, "Sdist must contain one PKG-INFO file.")
++        pkg_info = archive.extractfile(pkg_info_members[0])
++        _require(pkg_info is not None, "Could not read sdist PKG-INFO.")
++        source_metadata = Parser().parsestr(pkg_info.read().decode("utf-8"))
++        _require(
++            canonicalize_name(source_metadata.get("Name", "")) == "inflectg2p",
++            "Sdist PKG-INFO has an unexpected distribution name.",
++        )
++        _require(
++            Version(source_metadata.get("Version", "0")) == filename_version,
++            "Sdist filename and PKG-INFO versions differ.",
++        )
++        _require(
++            source_metadata.get("Requires-Python") == ">=3.10",
++            "Sdist Requires-Python must be >=3.10.",
++        )
++        _require(not missing, f"Sdist is missing required files: {sorted(missing)}.")
++    return filename_version
++
++
++def check_release_artifacts(dist_dir: Path, expected_version: str | None = None) -> None:
++    _require(dist_dir.is_dir(), f"Distribution directory does not exist: {dist_dir}.")
++    wheels = sorted(dist_dir.glob("*.whl"))
++    sdists = sorted(dist_dir.glob("*.tar.gz"))
++    _require(len(wheels) == 1, f"Expected exactly one wheel, found {len(wheels)}.")
++    _require(len(sdists) == 1, f"Expected exactly one sdist, found {len(sdists)}.")
++
++    wheel_version = _check_wheel(wheels[0], expected_version)
++    sdist_version = _check_sdist(sdists[0], expected_version)
++    _require(wheel_version == sdist_version, "Wheel and sdist versions differ.")
++
++
++def main(argv: list[str] | None = None) -> int:
++    parser = argparse.ArgumentParser(description="Check built inflectg2p release artifacts.")
++    parser.add_argument("dist", type=Path, nargs="?", default=Path("dist"))
++    parser.add_argument("--expected-version")
++    arguments = parser.parse_args(argv)
++    try:
++        check_release_artifacts(arguments.dist, arguments.expected_version)
++    except (OSError, ValueError, tarfile.TarError, zipfile.BadZipFile) as exc:
++        print(f"release artifact check failed: {exc}", file=sys.stderr)
++        return 1
++
++    version_note = (
++        f" for version {arguments.expected_version}" if arguments.expected_version else ""
++    )
++    print(f"release artifacts validated{version_note}")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
